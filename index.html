@@ -781,7 +781,7 @@
 <div class="modal" id="modal"><div class="modal-box"><div class="modal-head"><h3 id="modalTitle"></h3><button class="x" onclick="cerrarModal()">×</button></div><div id="modalBody"></div></div></div>
 
 <script>
-const KEY='control_negocio_pro_v1';
+const KEY='control_negocio_pro_v1_firebase_pruebas';
 const money=n=>new Intl.NumberFormat('es-EC',{style:'currency',currency:'USD'}).format(Number(n||0));
 const today=()=>new Date().toISOString().slice(0,10);
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
@@ -796,7 +796,7 @@ function audit(accion,detalle){db.auditoria.push({id:uid(),fecha:new Date().toIS
 function between(fecha,d,h){return (!d||fecha>=d)&&(!h||fecha<=h)}
 // Credenciales de administración independientes de los datos contables.
 // La validación en un HTML estático es una restricción de interfaz, no seguridad de servidor.
-const ADMIN_AUTH_KEY='control_negocio_admin_auth_v1';
+const ADMIN_AUTH_KEY='control_negocio_admin_auth_v1_firebase_pruebas';
 const MODULOS_ADMIN=new Set(['dashboard','administrador','productos','inventario','asignaciones','compras','proveedores','gastos','analisis','cierres','usuarios','respaldoConfig','historialVentas','carteraPendiente','metasCumplimiento','cajaBancos','gestionCheques']);
 const TITULOS_ADMIN={gestionCheques:'🧾 Manejo de cheques',carteraPendiente:'💳 Cartera pendiente',historialVentas:'🧾 Historial de ventas',dashboard:'🏠 Inicio',productos:'📦 Productos',inventario:'🧮 Inventario',asignaciones:'📦 Asignación a vendedores',compras:'🛒 Compras',proveedores:'🚚 Proveedores',gastos:'💸 Gastos administrativos',cajaBancos:'🏦 Caja Bancos',analisis:'🧠 Análisis',cierres:'🔒 Cierre diario',usuarios:'👤 Usuarios y permisos',respaldoConfig:'⚙️ Respaldo y configuración',metasCumplimiento:'🎯 Metas y Cumplimiento'};
 let adminAutenticado=false;
@@ -845,7 +845,7 @@ async function verificarAccesoAdmin(){
   go(destino);
 }
 // Gestión de usuarios y permisos (se conserva intacta la cuenta principal de administrador).
-const USERS_KEY='control_negocio_usuarios_v1';
+const USERS_KEY='control_negocio_usuarios_v1_firebase_pruebas';
 const PERMISOS_MODULOS=['ventas','clientes','productos','inventario','asignaciones','compras','proveedores','gastos','analisis','cierres'];
 const NOMBRES_PERMISOS={dashboard:'Inicio',ventas:'Ventas',clientes:'Clientes',productos:'Productos',inventario:'Inventario',asignaciones:'Asignación a vendedores',compras:'Compras',proveedores:'Proveedores',gastos:'Gastos administrativos',analisis:'Análisis',cierres:'Cierre diario'};
 const NIVELES={ventas:['ventas','clientes'],consulta:['inventario','analisis'],gestion:PERMISOS_MODULOS.filter(m=>m!=='asignaciones')};
