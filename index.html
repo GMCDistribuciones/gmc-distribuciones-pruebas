@@ -440,6 +440,7 @@
     <section id="productos" class="section">
       <div class="card">
         <div class="actions" style="justify-content:space-between"><h3>Productos</h3><div class="actions"><button class="btn btn-light" onclick="imprimirListadoProductos()">🖨 Imprimir listado</button><button class="btn btn-primary" onclick="modalProducto()">+ Nuevo producto</button></div></div>
+        <p class="muted" id="gmcProductosEstado" style="font-size:12px" aria-live="polite">Esperando autenticación y conexión con Firestore…</p>
         <div class="table-wrap"><table><thead><tr><th>Código</th><th>Producto</th><th>Categoría</th><th>Precio compra</th><th>PVP1</th><th>PVP2</th><th>PVP3</th><th>PVP4</th><th>PVP5</th><th>Stock</th><th></th></tr></thead><tbody id="tbProductos"></tbody></table></div>
       </div>
     </section>
@@ -556,6 +557,7 @@
     <section id="clientes" class="section">
       <div class="card">
         <div class="actions" style="justify-content:space-between"><h3>Clientes</h3><button class="btn btn-primary" onclick="modalPersona('cliente')">+ Cliente</button></div>
+        <p class="muted" id="gmcClientesEstado" style="font-size:12px" aria-live="polite">Esperando autenticación y conexión con Firestore…</p>
         <div class="table-wrap"><table><thead><tr><th>Identificación</th><th>Nombre</th><th>Razón social</th><th>Ruta</th><th>Día de visita</th><th>Teléfono</th><th>Email</th><th>Dirección</th><th></th></tr></thead><tbody id="tbClientes"></tbody></table></div>
       </div>
     </section>
@@ -1002,9 +1004,9 @@ function go(id){
 }
 document.querySelectorAll('.nav-btn').forEach(b=>b.onclick=()=>go(b.dataset.sec));
 function openModal(title,html){devolverFormularioAsignacionLote();document.getElementById('modalTitle').textContent=title;document.getElementById('modalBody').innerHTML=html;document.getElementById('modal').classList.add('show')}
-function cerrarModal(){if(document.body.classList.contains('sesion-bloqueada'))return;devolverFormularioAsignacionLote();edicionAdministradorIdentificada=false;solicitudClientePendiente=null;autorizacionClienteEdicion='';document.getElementById('modal').classList.remove('show')}
+function cerrarModal(){if(document.body.classList.contains('sesion-bloqueada'))return;window.gmcSalirAutorizacionClienteFirebase?.();devolverFormularioAsignacionLote();edicionAdministradorIdentificada=false;solicitudClientePendiente=null;autorizacionClienteEdicion='';document.getElementById('modal').classList.remove('show')}
 function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
-function deleteBy(tipo,id){if(tipo==='gastos')return solicitarEliminarGastoAdmin(id);if(tipo==='clientes'&&usuarioActual&&!adminAutenticado){if(autorizacionClienteBorrado!==String(id))return solicitarClaveAdministradorCliente('borrar',id);autorizacionClienteBorrado='';}if(tipo==='productos'&&(db.stockUsuarios||[]).some(a=>a.productoId===id&&a.estado==='abierta'&&a.restante>0))return alert('Este producto tiene existencias asignadas a usuarios. Cierre sus cajas antes de eliminarlo.');if(!confirm('¿Eliminar este registro?'))return;audit('ELIMINAR',tipo+' '+id);db[tipo]=db[tipo].filter(x=>x.id!==id);save()}
+function deleteBy(tipo,id){if(tipo==='clientes'||tipo==='productos')return window.gmcEliminarMaestroFirebase(tipo,id);if(tipo==='gastos')return solicitarEliminarGastoAdmin(id);if(tipo==='clientes'&&usuarioActual&&!adminAutenticado){if(autorizacionClienteBorrado!==String(id))return solicitarClaveAdministradorCliente('borrar',id);autorizacionClienteBorrado='';}if(tipo==='productos'&&(db.stockUsuarios||[]).some(a=>a.productoId===id&&a.estado==='abierta'&&a.restante>0))return alert('Este producto tiene existencias asignadas a usuarios. Cierre sus cajas antes de eliminarlo.');if(!confirm('¿Eliminar este registro?'))return;audit('ELIMINAR',tipo+' '+id);db[tipo]=db[tipo].filter(x=>x.id!==id);save()}
 
 function siguienteCodigoProducto(){
   const usados=new Set(db.productos.map(x=>String(x.codigo||'').trim()));
@@ -1082,11 +1084,9 @@ async function guardarProducto(id){
   const {iva:impuestoAnterior,...productoAnterior}=anterior||{};
   const obj={...productoAnterior,id:id||uid(),codigo:anterior?.codigo||pCodigo.value.trim()||siguienteCodigoProducto(),nombre,categoria:pCategoria.value.trim(),precio:pvp1,pvp1,pvp2:+pPvp2.value||0,pvp3:+pPvp3.value||0,pvp4:+pPvp4.value||0,pvp5:+pPvp5.value||0,costo:+pCosto.value||0,stock:+pStock.value||0,imagen};
   if(db.productos.some(x=>x.id!==id&&String(x.codigo)===String(obj.codigo)))return alert('El código del producto ya existe');
-  const productosPrevios=db.productos;
-  const auditoriaPrevia=db.auditoria.slice();
-  if(id)db.productos=db.productos.map(x=>x.id===id?obj:x);else db.productos=[...db.productos,obj];
-  try{audit('GUARDAR PRODUCTO',obj.codigo+' '+obj.nombre);save()}
-  catch(err){db.productos=productosPrevios;db.auditoria=auditoriaPrevia;throw new Error('No se pudo guardar la imagen y el producto. Compruebe el espacio de almacenamiento del navegador. '+err.message)}
+  await window.gmcGuardarMaestroFirebase('productos',obj);
+  try{audit('GUARDAR PRODUCTO',obj.codigo+' '+obj.nombre);save();}
+  catch(err){console.warn('Producto guardado en Firestore; respaldo local no disponible:',err);renderAll();}
   cerrarModal();
  }catch(err){alert(err.message||'No se pudo guardar la imagen del producto.')}
  finally{if(document.getElementById('pGuardarProducto'))document.getElementById('pGuardarProducto').disabled=false}
@@ -1433,6 +1433,7 @@ function solicitarClaveAdministradorCliente(accion,id){
  if(!db.clientes.some(c=>String(c.id)===String(id)))return alert('El cliente ya no existe.');
  solicitudClientePendiente={accion,id:String(id)};
  openModal('Autorización del administrador',`<p class="note">Para ${accion==='editar'?'editar':'borrar'} este cliente, ingrese la contraseña del administrador principal.</p>
+ <label>Correo del administrador Firebase</label><input id="correoAutorizarCliente" type="email" autocomplete="username" placeholder="Correo registrado en Firebase" value="${esc(localStorage.getItem('gmc_correo_admin_autorizacion_pruebas')||'')}">
  <label>Contraseña del administrador</label><input id="claveAutorizarCliente" type="password" autocomplete="current-password" onkeydown="if(event.key==='Enter'){event.preventDefault();confirmarAutorizacionCliente()}">
  <div class="actions" style="margin-top:12px"><button class="btn btn-primary" onclick="confirmarAutorizacionCliente()">Autorizar</button><button class="btn btn-light" onclick="cerrarModal()">Cancelar</button></div>`);
  document.getElementById('claveAutorizarCliente').focus();
@@ -1442,7 +1443,7 @@ async function confirmarAutorizacionCliente(){
  if(!pendiente||!usuarioActual||adminAutenticado||document.body.classList.contains('sesion-bloqueada')||!puedeEntrarModulo('clientes'))return;
  const clave=document.getElementById('claveAutorizarCliente')?.value||'';
  if(!clave)return alert('Ingrese la contraseña del administrador.');
- if(!await comprobarClaveAsignaciones(clave))return alert('Contraseña del administrador incorrecta. No se realizaron cambios.');
+ if(!await window.gmcValidarAdminClienteFirebase(clave))return;
  if(solicitudClientePendiente!==pendiente)return;
  const cliente=db.clientes.find(c=>String(c.id)===pendiente.id);
  if(!cliente)return alert('El cliente ya no existe.');
@@ -1452,7 +1453,6 @@ async function confirmarAutorizacionCliente(){
   modalPersona('cliente',cliente);
  }else if(pendiente.accion==='borrar'){
   autorizacionClienteBorrado=pendiente.id;
-  cerrarModal();
   deleteBy('clientes',pendiente.id);
  }
 }
@@ -1474,13 +1474,27 @@ function modalPersona(tipo,p=null){
  <div class="c4"><label>Vendedor / usuario</label><select id="perVendedor">${opcionesVendedores}</select></div>`:''}
  </div><button class="btn btn-primary" style="margin-top:12px" onclick="guardarPersona('${tipo}','${p?.id||''}')">Guardar</button>`)
 }
-function guardarPersona(tipo,id){
+async function guardarPersona(tipo,id){
  if(tipo==='cliente'&&id&&usuarioActual&&!adminAutenticado&&autorizacionClienteEdicion!==String(id))return alert('Se requiere la contraseña del administrador para editar este cliente.');
  const nombreCliente=tipo==='cliente'?document.getElementById('perNombreCliente').value.trim():'';
  const razonSocial=tipo==='cliente'?document.getElementById('perRazonSocial').value.trim():'';
  let o={id:id||uid(),identificacion:perId.value.trim(),nombre:tipo==='cliente'?(nombreCliente||razonSocial):perNom.value.trim(),telefono:perTel.value.trim(),email:perMail.value.trim(),direccion:perDir.value.trim()};
  if(tipo==='cliente'){const ruta=perRuta.value.trim();if(ruta&&!/^[0-9]+$/.test(ruta))return alert('La ruta debe contener solamente dígitos');o.ruta=ruta;o.diaVisita=perDiaVisita.value;o.nombreCliente=nombreCliente;o.razonSocial=razonSocial;o.vendedorId=perVendedor.value;const usuarioAsignado=cargarUsuarios().find(u=>String(u.id)===o.vendedorId),anterior=db.clientes.find(c=>c.id===id);o.vendedorNombre=usuarioAsignado?.usuario||(o.vendedorId&&o.vendedorId===String(anterior?.vendedorId||'')?anterior?.vendedorNombre||'':'');}
- if(!o.nombre)return alert(tipo==='cliente'?'Ingrese el nombre o la razón social':'Ingrese el nombre');let k=tipo==='cliente'?'clientes':'proveedores';if(id)db[k]=db[k].map(x=>x.id===id?o:x);else db[k].push(o);save();cerrarModal()
+ if(!o.nombre)return alert(tipo==='cliente'?'Ingrese el nombre o la razón social':'Ingrese el nombre');
+ if(tipo==='cliente'){
+  const boton=document.querySelector('#modalBody button[onclick^="guardarPersona"]');
+  if(boton?.disabled)return;
+  if(boton)boton.disabled=true;
+  try{
+   await window.gmcGuardarMaestroFirebase('clientes',o);
+   try{audit('GUARDAR CLIENTE',o.id+' '+o.nombre);save();}
+   catch(err){console.warn('Cliente guardado en Firestore; respaldo local no disponible:',err);renderAll();}
+   cerrarModal();
+  }catch(err){alert(err.message||'No se pudo guardar el cliente en Firestore.')}
+  finally{if(boton?.isConnected)boton.disabled=false;}
+  return;
+ }
+ let k=tipo==='cliente'?'clientes':'proveedores';if(id)db[k]=db[k].map(x=>x.id===id?o:x);else db[k].push(o);save();cerrarModal()
 }
 function renderPersonas(){
  tbClientes.innerHTML=db.clientes.map(p=>`<tr><td>${esc(p.identificacion)}</td><td>${esc(p.nombreCliente??(p.razonSocial?'':p.nombre||''))}</td><td>${esc(p.razonSocial||'')}</td><td>${esc(p.ruta||'')}</td><td>${esc(p.diaVisita||'')}</td><td>${esc(p.telefono)}</td><td>${esc(p.email)}</td><td>${esc(p.direccion)}</td><td><div class="actions" style="flex-wrap:nowrap;gap:5px"><button class="btn btn-light" style="padding:7px 9px" title="Editar" aria-label="Editar cliente" onclick='modalPersona("cliente",${JSON.stringify(p)})'>✏️</button><button class="btn btn-light danger" style="padding:7px 9px" title="Borrar" aria-label="Borrar cliente" onclick="deleteBy('clientes','${p.id}')">🗑️</button></div></td></tr>`).join('')||`<tr><td colspan="9" class="empty">Sin clientes</td></tr>`;
@@ -3725,6 +3739,7 @@ function modalEntradaFirebaseGMC(tipo='usuario'){
   document.getElementById('fbLoginEmail')?.focus();
 }
 function bloquearFirebaseGMC(tipo='usuario'){
+  gmcDetenerMaestrosFirebase();
   if(stopPerfilesGMC){stopPerfilesGMC();stopPerfilesGMC=null;}
   if(stopPerfilActualGMC){stopPerfilActualGMC();stopPerfilActualGMC=null;}
   firebaseRolGMC=null;
@@ -3790,7 +3805,7 @@ async function establecerUsuarioFirebaseGMC(user,perfil,claveIngresada=''){
     }
   },err=>{console.warn('No se pudo seguir el permiso de la sesión:',err);window.bloquearAplicativo();});
   document.body.classList.remove('sesion-bloqueada');cerrarModal();actualizarSesionUI();
-  const pagina=perfil.rol==='admin'?(destinoAdmin||'administrador'):'misModulos';destinoAdmin='administrador';go(pagina);
+  const pagina=perfil.rol==='admin'?(destinoAdmin||'administrador'):'misModulos';destinoAdmin='administrador';go(pagina);gmcSuscribirMaestrosFirebase(user.uid);
 }
 window.gmcIngresarFirebase=async(tipo='usuario')=>{
   if(inicioPendienteGMC)return;
@@ -3908,7 +3923,137 @@ onAuthStateChanged(firebaseAuthGMC,async user=>{
     await establecerUsuarioFirebaseGMC(user,snap.data());
   }catch(e){console.warn('Sesión Firebase sin autorización:',e);await signOut(firebaseAuthGMC).catch(()=>{});}
 });
-// Este archivo de PRUEBAS continúa sin lecturas ni escrituras de datos contables en Firestore.
+// ETAPA 3 - Solo fichas maestras de PRODUCTOS y CLIENTES en Cloud Firestore.
+// Ventas, stock consumido, compras, abonos, cheques y caja continúan LOCALES.
+let gmcMasterSesion='';
+let gmcMasterUnsubs=[];
+let gmcMasterListos={productos:false,clientes:false};
+let gmcAdminClienteSecundario=null;
+let gmcCorreoAdminCliente='';
+const gmcMaestroEstado=(tipo,texto)=>{
+ const nodo=document.getElementById(tipo==='productos'?'gmcProductosEstado':'gmcClientesEstado');
+ if(nodo)nodo.textContent=texto;
+};
+function gmcDetenerMaestrosFirebase(){
+ for(const dejar of gmcMasterUnsubs.splice(0)){try{dejar()}catch{}}
+ gmcMasterSesion='';gmcMasterListos={productos:false,clientes:false};
+ // La autorización temporal del administrador NO debe subsistir al cerrar sesión.
+ window.gmcSalirAutorizacionClienteFirebase?.();
+ for(const tipo of ['productos','clientes']){
+  db[tipo]=[];
+  gmcMaestroEstado(tipo,'Inicie sesión para consultar Firestore.');
+ }
+}
+function gmcSuscribirMaestrosFirebase(uidSesion){
+ gmcDetenerMaestrosFirebase();
+ gmcMasterSesion=uidSesion;
+ for(const tipo of ['productos','clientes']){
+  db[tipo]=[];
+  gmcMaestroEstado(tipo,'Conectando con Firestore…');
+  const dejar=onSnapshot(collection(firestoreGMC,tipo),{includeMetadataChanges:true},snap=>{
+    if(gmcMasterSesion!==uidSesion||firebaseAuthGMC.currentUser?.uid!==uidSesion)return;
+    db[tipo]=snap.docs.map(d=>({ ...d.data(), id:d.id }));
+    gmcMasterListos[tipo]=!snap.metadata.fromCache;
+    gmcMaestroEstado(tipo,snap.metadata.fromCache
+      ? 'Vista temporal almacenada en caché. Esperando confirmación del servidor; no registre modificaciones.'
+      : snap.metadata.hasPendingWrites
+      ? 'Hay cambios pendientes de confirmación por Firestore.'
+      : 'Sincronizado con Cloud Firestore · '+db[tipo].length+' registro(s).');
+    // Respaldo local solo de la copia de pruebas: NO escribe otra vez los maestros a Firestore.
+    try{localStorage.setItem(KEY,JSON.stringify(db))}catch(e){console.warn('Respaldo local no disponible:',e)}
+    renderAll();
+  },err=>{
+    if(gmcMasterSesion!==uidSesion)return;
+    gmcMasterListos[tipo]=false;
+    db[tipo]=[];
+    gmcMaestroEstado(tipo,'No se pudo leer Firestore: '+mensajeFirebaseGMC(err));
+    renderAll();
+    console.warn('Firestore maestros '+tipo,err);
+  });
+  gmcMasterUnsubs.push(dejar);
+ }
+ renderAll();
+}
+function gmcMaestroPuedeEscribir(tipo, accion='guardar'){
+ if(document.body.classList.contains('sesion-bloqueada')||!firebaseAuthGMC.currentUser||!gmcMasterListos[tipo])throw Error('Espere la conexión confirmada de '+tipo+' con Firestore. Compruebe que tiene internet y las reglas de seguridad.');
+ if(typeof navigator!=='undefined'&&!navigator.onLine)throw Error('Para guardar '+tipo+' en esta etapa es necesaria una conexión a Internet.');
+ if(tipo==='productos'&&!adminAutenticado&&!usuarioActual?.modulos.includes('productos'))throw Error('No tiene permisos para modificar productos.');
+ if(tipo==='clientes'&&!adminAutenticado&&!usuarioActual?.modulos.includes('clientes'))throw Error('No tiene permisos para modificar clientes.');
+ if(tipo==='clientes'&&accion!=='crear'&&!adminAutenticado&&!gmcAdminClienteSecundario)throw Error('Para editar o borrar un cliente, autorice primero al administrador Firebase.');
+}
+// Firebase administra permisos de forma independiente a las comprobaciones del HTML.
+window.gmcGuardarMaestroFirebase=async(tipo,registro)=>{
+ if(!['productos','clientes'].includes(tipo))throw Error('Colección no autorizada.');
+ const anterior=db[tipo].some(p=>p.id===registro.id);
+ gmcMaestroPuedeEscribir(tipo,anterior?'editar':'crear');
+ const dato={...registro};
+ if(tipo==='clientes'&&!anterior){
+   dato.creadoPor=firebaseAuthGMC.currentUser.uid;
+   // Un vendedor solo puede registrar clientes bajo su propia responsabilidad.
+   if(!adminAutenticado){dato.vendedorId=firebaseAuthGMC.currentUser.uid;dato.vendedorNombre=usuarioActual?.usuario||'';}
+ }
+ if(tipo==='clientes'&&anterior){
+   const previo=db.clientes.find(p=>p.id===dato.id);
+   if(previo?.creadoPor)dato.creadoPor=previo.creadoPor;
+ }
+ const tamano=new Blob([JSON.stringify(dato)]).size;
+ if(tamano>900000)throw Error('El registro es demasiado grande para un documento Firestore (límite 1 MiB). Reduzca la imagen del producto.');
+ const remoto=(tipo==='clientes'&&anterior&&!adminAutenticado)
+   ?getFirestore(gmcAdminClienteSecundario.app):firestoreGMC;
+ const referencia=doc(remoto,tipo,dato.id);
+ if(anterior)await updateDoc(referencia,dato);
+ else await setDoc(referencia,dato);
+};
+window.gmcEliminarMaestroFirebase=async(tipo,id)=>{
+ if(!['productos','clientes'].includes(tipo))return;
+ try{
+  if(tipo==='clientes'&&usuarioActual&&!adminAutenticado&&autorizacionClienteBorrado!==String(id)){
+   return solicitarClaveAdministradorCliente('borrar',id);
+  }
+  gmcMaestroPuedeEscribir(tipo,'borrar');
+  const registro=db[tipo].find(p=>String(p.id)===String(id));
+  if(!registro)throw Error('El registro ya no existe en Firestore.');
+  if(tipo==='clientes'&&usuarioActual&&!adminAutenticado&&autorizacionClienteBorrado!==String(id)){
+   return solicitarClaveAdministradorCliente('borrar',id);
+  }
+  if(tipo==='productos'&&(db.stockUsuarios||[]).some(a=>a.productoId===id&&a.estado==='abierta'&&a.restante>0))return alert('Este producto tiene existencias asignadas a usuarios. Cierre sus cajas antes de eliminarlo.');
+  if(!confirm('¿Eliminar este registro?'))return;
+  const remoto=(tipo==='clientes'&&!adminAutenticado)
+   ?getFirestore(gmcAdminClienteSecundario.app):firestoreGMC;
+  await deleteDoc(doc(remoto,tipo,id));
+  try{audit('ELIMINAR',tipo+' '+id);save();}
+  catch(err){console.warn('Registro eliminado en Firestore; respaldo local no disponible:',err);renderAll();}
+  if(tipo==='clientes'&&!adminAutenticado){autorizacionClienteBorrado='';cerrarModal();}
+ }catch(err){alert(err.message||mensajeFirebaseGMC(err));}
+};
+// El vendedor sigue necesitando la clave del ADMINISTRADOR, comprobada de verdad
+// con Firebase Auth en una app secundaria independiente, sin cambiar su sesión.
+window.gmcValidarAdminClienteFirebase=async(clave)=>{
+ let authSecundaria=null;
+ const correo=document.getElementById('correoAutorizarCliente')?.value.trim()||'';
+ if(!correo)return alert('Ingrese el correo del administrador Firebase.'),false;
+ if(!navigator.onLine)return alert('La autorización administrativa requiere Internet.'),false;
+ try{
+  window.gmcSalirAutorizacionClienteFirebase();
+  const secundaria=getApps().find(a=>a.name==='gmcAutorizacionClientes')||initializeApp(configFirebaseGMC,'gmcAutorizacionClientes');
+  authSecundaria=getAuth(secundaria);
+  const acceso=await signInWithEmailAndPassword(authSecundaria,correo,clave);
+  const snap=await getDoc(doc(getFirestore(secundaria),'perfiles',acceso.user.uid));
+  if(acceso.user.uid!=='vBVz2PJ3ReUn2DXFR4ALoCAh17s2'||!snap.exists()||snap.data().rol!=='admin'||snap.data().activo!==true){
+    await signOut(authSecundaria);
+    alert('La cuenta indicada no es el administrador autorizado.');return false;
+  }
+  gmcAdminClienteSecundario={app:secundaria,auth:authSecundaria,uid:acceso.user.uid};
+  gmcCorreoAdminCliente=correo;
+  localStorage.setItem('gmc_correo_admin_autorizacion_pruebas',correo);
+  return true;
+ }catch(err){if(authSecundaria)await signOut(authSecundaria).catch(()=>{});alert('No se autorizó la operación. '+mensajeFirebaseGMC(err));return false;}
+};
+window.gmcSalirAutorizacionClienteFirebase=()=>{
+ if(gmcAdminClienteSecundario){const auth=gmcAdminClienteSecundario.auth;gmcAdminClienteSecundario=null;signOut(auth).catch(()=>{});}
+};
+// Fin ETAPA 3. Ninguna venta, compra, abono ni movimiento de inventario se
+// sincroniza: serán migrados en una etapa específica con transacciones seguras.
 bloquearFirebaseGMC();
 
 </script>
