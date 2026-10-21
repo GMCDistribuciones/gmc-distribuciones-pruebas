@@ -791,7 +791,13 @@
 <script>
 const KEY='control_negocio_pro_v1_firebase_pruebas';
 const money=n=>new Intl.NumberFormat('es-EC',{style:'currency',currency:'USD'}).format(Number(n||0));
-const today=()=>new Date().toISOString().slice(0,10);
+// Fecha de operación: un solo día calendario de Ecuador para ventas y abonos.
+// Mantener los timestamps ISO de auditoría sin cambiar; solo fechas de calendario.
+const today=()=>{
+  const partes=new Intl.DateTimeFormat('en-US',{timeZone:'America/Guayaquil',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());
+  const valor=tipo=>partes.find(p=>p.type===tipo).value;
+  return `${valor('year')}-${valor('month')}-${valor('day')}`;
+};
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
 let db=JSON.parse(localStorage.getItem(KEY)||'null')||{
   config:{ruc:'',razon:'',nombre:'Mi Negocio',direccion:'',telefono:'',email:''},
@@ -3166,7 +3172,7 @@ function renderAnalisis(){
 }
 // Cierre diario: fecha local del sistema; cierre individual o consolidado sin duplicar movimientos.
 function fechaSistemaCierre(){
- const d=new Date();return [d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-');
+ return today();
 }
 // Gastos operativos del vendedor: registro exclusivo de su caja y contabilización separada.
 function usuarioGastoOperativo(g){
