@@ -3661,29 +3661,256 @@ function renderMetasCumplimiento(){
 function renderAll(){renderCajaBancos();renderGestionCheques();renderProductos();renderRutas();renderCarteraPendiente('cp');renderInventario();renderStockUsuarios();renderPersonas();renderVentas();renderCompras();renderConfig();renderGastos();renderAnalisis();renderMetasCumplimiento();renderCierres();renderMiCierre();renderMisCreditos();renderMisGastosOperativos();prepararVentaRapida();renderAlertaCarteraVentas();renderUsuarios();actualizarSesionUI()}
 [dashDesde,vDesde,gDesde].forEach(x=>x.value=today().slice(0,8)+'01');[dashHasta,vHasta,gHasta].forEach(x=>x.value=today());cFecha.value=fechaSistemaCierre();
 renderAll();
-bloquearAplicativo();
+// En la etapa 2, el acceso queda bloqueado hasta autenticar en Firebase.
+document.body.classList.add('sesion-bloqueada');
+openModal('Preparando acceso Firebase','<p class="note">Conectando Firebase Authentication. Si no se completa, compruebe su conexión a Internet y actualice esta página.</p>');
 </script>
-<!-- Firebase: inicialización aislada para pruebas. No lee ni escribe datos comerciales. -->
+<!-- Firebase Authentication + perfiles de usuarios (etapa de pruebas) -->
 <script type="module">
-  import { initializeApp, getApps, getApp } from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-app.js';
-  import { getAuth } from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-auth.js';
-  import { getFirestore } from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-firestore.js';
-
-  const firebaseConfig = {
-    apiKey: 'AIzaSyBtj-y2p3qAYWknIX6J5aK6DAzkD9bOc1s',
-    authDomain: 'gmcdistribucionesdb.firebaseapp.com',
-    projectId: 'gmcdistribucionesdb',
-    storageBucket: 'gmcdistribucionesdb.firebasestorage.app',
-    messagingSenderId: '396587918653',
-    appId: '1:396587918653:web:cba23464081b04a79dd154',
-    measurementId: 'G-K6TNTVC2ZX'
+// GMC DISTRIBUCIONES - Etapa 2: Firebase Authentication + perfiles/roles en Firestore.
+// La facturación, inventario, abonos y cajas continúan aislados en localStorage de PRUEBAS.
+import {initializeApp, getApps, getApp} from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-app.js';
+import {getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, EmailAuthProvider, reauthenticateWithCredential, updatePassword, sendPasswordResetEmail} from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-auth.js';
+import {getFirestore, doc, getDoc, collection, onSnapshot, setDoc, updateDoc, deleteDoc} from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-firestore.js';
+const configFirebaseGMC = {
+  apiKey:'AIzaSyBtj-y2p3qAYWknIX6J5aK6DAzkD9bOc1s',
+  authDomain:'gmcdistribucionesdb.firebaseapp.com',
+  projectId:'gmcdistribucionesdb',
+  storageBucket:'gmcdistribucionesdb.firebasestorage.app',
+  messagingSenderId:'396587918653',
+  appId:'1:396587918653:web:cba23464081b04a79dd154',
+  measurementId:'G-K6TNTVC2ZX'
+};
+const appGMC=getApps().find(a=>a.name==='[DEFAULT]')||initializeApp(configFirebaseGMC);
+const firebaseAuthGMC=getAuth(appGMC);
+const firestoreGMC=getFirestore(appGMC);
+window.gmcFirebase={app:appGMC,auth:firebaseAuthGMC,firestore:firestoreGMC};
+let firebaseRolGMC=null;
+let stopPerfilesGMC=null;
+let stopPerfilActualGMC=null;
+let inicioPendienteGMC=false;
+let gmcEfectuandoSalida=false;
+const htmlGMC=s=>esc(String(s??''));
+function mensajeFirebaseGMC(error){
+  const code=error?.code||'';
+  const mensajes={
+    'auth/invalid-credential':'Correo o contraseña incorrectos.',
+    'auth/invalid-email':'Correo electrónico inválido.',
+    'auth/email-already-in-use':'Este correo ya tiene una cuenta Firebase. Ingrese con ella.',
+    'auth/weak-password':'Contraseña demasiado débil para Firebase.',
+    'auth/network-request-failed':'No hay conexión a Internet con Firebase. Inténtelo al recuperar la conexión.',
+    'auth/too-many-requests':'Demasiados intentos. Inténtelo más tarde.',
+    'auth/requires-recent-login':'Por seguridad, cierre sesión e ingrese de nuevo antes de cambiar la clave.',
+    'permission-denied':'Firestore todavía no autoriza leer o modificar este perfil. Configure primero las reglas y el perfil del administrador.',
+    'auth/operation-not-allowed':'Habilite Correo electrónico/contraseña en Firebase Authentication.'
   };
+  return mensajes[code]||mensajes[error?.message]||('Error de Firebase: '+(code||error?.message||'desconocido'));
+}
+function modalEntradaFirebaseGMC(tipo='usuario'){
+  if(tipo==='registro'){
+    openModal('Primera configuración · Firebase',`
+      <p class="note">Esta operación crea una cuenta en Firebase Authentication. <strong>No concede permisos de administrador automáticamente.</strong> Después debe autorizar su UID mediante las reglas y el perfil de Firestore suministrados.</p>
+      <div class="row"><div class="c6"><label>Usuario administrador</label><input id="fbAdminNombre" autocomplete="username" value="ADMINISTRADOR"></div>
+      <div class="c6"><label>Correo real del administrador</label><input id="fbAdminEmail" type="email" autocomplete="email"></div>
+      <div class="c6"><label>Contraseña (mínimo 8 caracteres)</label><input id="fbAdminPass" type="password" autocomplete="new-password"></div>
+      <div class="c6"><label>Confirmar contraseña</label><input id="fbAdminConfirm" type="password" autocomplete="new-password"></div></div>
+      <div class="actions" style="margin-top:12px"><button class="btn btn-primary" onclick="gmcRegistrarAdministradorFirebase()">Crear cuenta inicial de Firebase</button><button class="btn btn-light" onclick="abrirAccesoAdmin()">Ya tengo cuenta</button></div>`);
+    return;
+  }
+  const admin=tipo==='admin';
+  openModal(admin?'Acceso del administrador · Firebase':'Ingreso de usuario · Firebase',`
+    <p class="note">Autenticación centralizada mediante Firebase. Sus ventas y demás datos continúan en el almacenamiento local aislado de estas pruebas.</p>
+    <div class="row"><div class="c6"><label>Correo electrónico</label><input id="fbLoginEmail" type="email" autocomplete="username"></div><div class="c6"><label>Contraseña</label><input id="fbLoginPass" type="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')gmcIngresarFirebase('${admin?'admin':'usuario'}')"></div></div>
+    <div class="actions" style="margin-top:12px"><button class="btn btn-primary" onclick="gmcIngresarFirebase('${admin?'admin':'usuario'}')">Ingresar</button>${admin?'':'<button class="btn btn-light" onclick="abrirAccesoAdmin()">Ingresar como administrador</button>'}<button class="btn btn-light" onclick="gmcMostrarRegistroFirebase()">Primera configuración</button></div>`);
+  document.getElementById('fbLoginEmail')?.focus();
+}
+function bloquearFirebaseGMC(tipo='usuario'){
+  if(stopPerfilesGMC){stopPerfilesGMC();stopPerfilesGMC=null;}
+  if(stopPerfilActualGMC){stopPerfilActualGMC();stopPerfilActualGMC=null;}
+  firebaseRolGMC=null;
+  adminAutenticado=false;usuarioActual=null;
+  actualizarSesionUI();
+  document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
+  document.body.classList.add('sesion-bloqueada');
+  modalEntradaFirebaseGMC(tipo);
+}
+window.abrirAccesoAdmin=(id='administrador')=>{destinoAdmin=id;modalEntradaFirebaseGMC('admin');};
+window.abrirLoginUsuario=()=>modalEntradaFirebaseGMC('usuario');
+window.verificarAccesoAdmin=()=>window.gmcIngresarFirebase('admin');
+window.verificarLoginUsuario=()=>window.gmcIngresarFirebase('usuario');
+window.gmcMostrarRegistroFirebase=()=>modalEntradaFirebaseGMC('registro');
+window.gmcRegistrarAdministradorFirebase=async()=>{
+  if(inicioPendienteGMC)return;
+  const nombre=document.getElementById('fbAdminNombre')?.value.trim();
+  const email=document.getElementById('fbAdminEmail')?.value.trim();
+  const pass=document.getElementById('fbAdminPass')?.value||'';
+  if(!nombre||!email||pass.length<8||pass!==document.getElementById('fbAdminConfirm')?.value)return alert('Complete el nombre, un correo real y dos contraseñas iguales de al menos 8 caracteres.');
+  inicioPendienteGMC=true;
+  try{
+    const cred=await createUserWithEmailAndPassword(firebaseAuthGMC,email,pass);
+    const id=cred.user.uid;
+    await signOut(firebaseAuthGMC);
+    bloquearFirebaseGMC('admin');
+    openModal('Cuenta Firebase creada · Pendiente de autorización',`
+      <p class="note"><b>Cuenta creada en Firebase Authentication.</b> Ahora debe vincularla manualmente como administrador. La creación de la cuenta por sí sola NO autoriza el acceso administrativo.</p>
+      <p><b>Nombre:</b> ${htmlGMC(nombre)}<br><b>Correo:</b> ${htmlGMC(email)}<br><b>UID:</b> <code id="fbUidAdmin">${htmlGMC(id)}</code></p>
+      <p class="note">1. En Firestore cree el documento <code>perfiles/${htmlGMC(id)}</code> con los campos <code>uid</code>, <code>usuario</code>, <code>correo</code>, <code>rol</code> = <code>admin</code> y <code>activo</code> = <code>true</code>.<br>2. Publique las reglas entregadas sustituyendo <code>REEMPLAZAR_CON_UID_ADMIN</code> por este UID.<br>3. Regrese aquí e ingrese con su correo y contraseña.</p>
+      <button class="btn btn-primary" onclick="navigator.clipboard?.writeText(document.getElementById('fbUidAdmin').textContent)">Copiar UID</button> <button class="btn btn-light" onclick="abrirAccesoAdmin()">Ir a inicio de sesión</button>`);
+  }catch(error){alert(mensajeFirebaseGMC(error));}
+  finally{inicioPendienteGMC=false;}
+};
+async function establecerUsuarioFirebaseGMC(user,perfil,claveIngresada=''){
+  if(!perfil||perfil.uid!==user.uid||perfil.activo!==true||!['admin','vendedor'].includes(perfil.rol))throw Error('Esta cuenta no tiene un perfil autorizado y activo en Firestore.');
+  firebaseRolGMC=perfil.rol;
+  if(perfil.rol==='admin'){
+    if(claveIngresada){
+      const sal=Array.from(crypto.getRandomValues(new Uint8Array(16)),x=>x.toString(16).padStart(2,'0')).join('');
+      localStorage.setItem(ADMIN_AUTH_KEY,JSON.stringify({usuario:perfil.usuario||'ADMINISTRADOR',correo:user.email,sal,hash:await hashClaveAdmin(claveIngresada,sal)}));
+    }
+    // La contraseña sólo se conoce tras un inicio explícito; no se considera autenticación de servidor.
+    adminAutenticado=true;usuarioActual=null;
+    if(stopPerfilesGMC)stopPerfilesGMC();
+    stopPerfilesGMC=onSnapshot(collection(firestoreGMC,'perfiles'),instantanea=>{
+      const vendedores=instantanea.docs.map(d=>d.data()).filter(p=>p.rol==='vendedor').map(p=>({id:p.uid,usuario:p.usuario,nivel:p.nivel||'ventas',modulos:Array.isArray(p.modulos)?p.modulos:[],activo:p.activo,correo:p.correo,firebaseUid:p.uid}));
+      localStorage.setItem(USERS_KEY,JSON.stringify(vendedores));renderUsuarios();
+    },err=>console.warn('Error al consultar perfiles de usuarios:',err));
+  }else{
+    adminAutenticado=false;
+    usuarioActual={id:user.uid,usuario:perfil.usuario||user.email,modulos:(perfil.modulos||[]).filter(m=>PERMISOS_MODULOS.includes(m))};
+    localStorage.setItem(USERS_KEY,JSON.stringify([{id:user.uid,usuario:usuarioActual.usuario,nivel:perfil.nivel||'ventas',modulos:usuarioActual.modulos,activo:true,correo:user.email}]));
+  }
+  if(stopPerfilActualGMC){stopPerfilActualGMC();stopPerfilActualGMC=null;}
+  stopPerfilActualGMC=onSnapshot(doc(firestoreGMC,'perfiles',user.uid),instantanea=>{
+    const actual=instantanea.exists()?instantanea.data():null;
+    if(!actual||actual.uid!==user.uid||actual.activo!==true||actual.rol!==perfil.rol){window.bloquearAplicativo();return;}
+    if(actual.rol==='vendedor'&&usuarioActual){
+      usuarioActual.usuario=actual.usuario||usuarioActual.usuario;
+      usuarioActual.modulos=Array.isArray(actual.modulos)?actual.modulos.filter(m=>PERMISOS_MODULOS.includes(m)):[];
+      actualizarSesionUI();
+    }
+  },err=>{console.warn('No se pudo seguir el permiso de la sesión:',err);window.bloquearAplicativo();});
+  document.body.classList.remove('sesion-bloqueada');cerrarModal();actualizarSesionUI();
+  const pagina=perfil.rol==='admin'?(destinoAdmin||'administrador'):'misModulos';destinoAdmin='administrador';go(pagina);
+}
+window.gmcIngresarFirebase=async(tipo='usuario')=>{
+  if(inicioPendienteGMC)return;
+  const email=document.getElementById('fbLoginEmail')?.value.trim();
+  const clave=document.getElementById('fbLoginPass')?.value||'';
+  if(!email||!clave)return alert('Ingrese el correo electrónico y la contraseña de Firebase.');
+  inicioPendienteGMC=true;
+  try{
+    const resultado=await signInWithEmailAndPassword(firebaseAuthGMC,email,clave);
+    const perfilSnap=await getDoc(doc(firestoreGMC,'perfiles',resultado.user.uid));
+    const perfil=perfilSnap.exists()?perfilSnap.data():null;
+    if(!perfil||perfil.rol!==(tipo==='admin'?'admin':'vendedor')){
+      await signOut(firebaseAuthGMC);
+      return alert('Cuenta sin acceso autorizado para este tipo de usuario. Compruebe su perfil y las reglas de Firestore.');
+    }
+    await establecerUsuarioFirebaseGMC(resultado.user,perfil,clave);
+  }catch(err){alert(mensajeFirebaseGMC(err));try{await signOut(firebaseAuthGMC)}catch{};}
+  finally{inicioPendienteGMC=false;}
+};
+window.bloquearAplicativo=async()=>{
+  if(gmcEfectuandoSalida)return;
+  gmcEfectuandoSalida=true;
+  try{await signOut(firebaseAuthGMC);}catch(e){console.warn('No se pudo cerrar Firebase:',e)}
+  gmcEfectuandoSalida=false;
+  bloquearFirebaseGMC();
+};
+window.cerrarSesionAdmin=()=>window.bloquearAplicativo();
+window.accionSesionUsuario=()=>window.bloquearAplicativo();
+// Usuarios del sistema: sus contraseñas pertenecen a Firebase, nunca a documentos Firestore.
+window.modalUsuario=(id='')=>{
+  if(!adminAutenticado||firebaseRolGMC!=='admin')return window.abrirAccesoAdmin();
+  const u=cargarUsuarios().find(x=>x.id===id);
+  const checks=PERMISOS_MODULOS.map(m=>`<label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" data-permiso="${m}" style="width:auto" ${u?.modulos?.includes(m)||(!u&&NIVELES.ventas.includes(m))?'checked':''}>${NOMBRES_PERMISOS[m]}</label>`).join('');
+  openModal(u?'Editar vendedor Firebase':'Crear vendedor Firebase',`<p class="note">${u?'Los cambios de nivel, módulos y estado se guardan en Firestore. La contraseña existente se restablece desde Firebase.':'Se creará la cuenta del vendedor en Firebase Authentication y su perfil de permisos en Firestore.'}</p>
+  <div class="row"><div class="c6"><label>Nombre de usuario</label><input id="uNombre" value="${htmlGMC(u?.usuario||'')}"></div>
+  <div class="c6"><label>Correo electrónico del vendedor</label><input id="uCorreoFirebase" type="email" value="${htmlGMC(u?.correo||'')}" ${u?'readonly':''}></div>
+  <div class="c6"><label>Nivel de uso</label><select id="uNivel" onchange="actualizarPermisosUsuario()"><option value="ventas" ${!u||u.nivel==='ventas'?'selected':''}>Ventas / caja</option><option value="consulta" ${u?.nivel==='consulta'?'selected':''}>Consulta</option><option value="gestion" ${u?.nivel==='gestion'?'selected':''}>Gestión</option><option value="personalizado" ${u?.nivel==='personalizado'?'selected':''}>Personalizado</option></select></div>
+  ${u?'':`<div class="c6"><label>Contraseña inicial (mínimo 8 caracteres)</label><input id="uClave" type="password" autocomplete="new-password"></div><div class="c6"><label>Confirmar contraseña</label><input id="uConfirmar" type="password" autocomplete="new-password"></div>`}
+  <div class="c12"><label><input type="checkbox" id="uActivo" style="width:auto" ${!u||u.activo?'checked':''}> Usuario activo</label></div>
+  <div class="c12"><label>Módulos permitidos</label><div class="grid g3">${checks}</div></div></div>
+  <div class="actions" style="margin-top:12px"><button class="btn btn-primary" onclick="guardarUsuario('${htmlGMC(id)}')">Guardar usuario</button>${u?`<button class="btn btn-light" onclick="gmcRestablecerClaveVendedor('${htmlGMC(u.correo)}')">Enviar correo para restablecer contraseña</button>`:''}</div>`);
+};
+window.guardarUsuario=async(id='')=>{
+  if(!adminAutenticado||firebaseRolGMC!=='admin'||inicioPendienteGMC)return;
+  const u=cargarUsuarios().find(x=>x.id===id);
+  const nombre=document.getElementById('uNombre')?.value.trim()||'';
+  const correo=document.getElementById('uCorreoFirebase')?.value.trim()||'';
+  const permisos=[...document.querySelectorAll('[data-permiso]:checked')].map(x=>x.dataset.permiso);
+  const nivel=document.getElementById('uNivel')?.value||'ventas';
+  const activo=!!document.getElementById('uActivo')?.checked;
+  if(!nombre||!correo||!correo.includes('@'))return alert('Ingrese un nombre y un correo válido.');
+  if(cargarUsuarios().some(x=>x.id!==id&&x.usuario.toLowerCase()===nombre.toLowerCase()))return alert('El nombre de usuario ya existe.');
+  if(!permisos.length)return alert('Seleccione al menos un módulo.');
+  inicioPendienteGMC=true;
+  try{
+    if(u){
+      await updateDoc(doc(firestoreGMC,'perfiles',id),{usuario:nombre,nivel,modulos:permisos,activo});
+    }else{
+      const clave=document.getElementById('uClave')?.value||'';
+      if(clave.length<8||clave!==document.getElementById('uConfirmar')?.value)return alert('La contraseña debe tener 8 caracteres como mínimo y coincidir.');
+      const secundaria=getApps().find(a=>a.name==='gmcRegistroVendedores')||initializeApp(configFirebaseGMC,'gmcRegistroVendedores');
+      const authSecundaria=getAuth(secundaria);
+      let alta;
+      try{alta=await createUserWithEmailAndPassword(authSecundaria,correo,clave)}
+      finally{try{await signOut(authSecundaria)}catch{}}
+      try{await setDoc(doc(firestoreGMC,'perfiles',alta.user.uid),{uid:alta.user.uid,usuario:nombre,correo:alta.user.email,rol:'vendedor',nivel,modulos:permisos,activo});}
+      catch(err){alert('Se creó la cuenta Auth, pero no se guardó su perfil en Firestore. UID: '+alta.user.uid+'. Corrija permisos o elimine esa cuenta desde Firebase Console. '+mensajeFirebaseGMC(err));return;}
+    }
+    cerrarModal();renderUsuarios();alert('Usuario y permisos guardados en Firebase.');
+  }catch(error){alert(mensajeFirebaseGMC(error));}
+  finally{inicioPendienteGMC=false;}
+};
+window.gmcRestablecerClaveVendedor=async correo=>{
+  if(!adminAutenticado||firebaseRolGMC!=='admin'||!correo)return;
+  if(!confirm('¿Enviar un correo para que este vendedor restablezca su contraseña?'))return;
+  try{await sendPasswordResetEmail(firebaseAuthGMC,correo);alert('Se envió el correo para restablecer la contraseña.');}
+  catch(e){alert(mensajeFirebaseGMC(e));}
+};
+window.eliminarUsuario=async id=>{
+  if(!adminAutenticado||firebaseRolGMC!=='admin')return;
+  if((db.stockUsuarios||[]).some(a=>a.usuarioId===id&&a.estado==='abierta'))return alert('El usuario tiene stock pendiente. Cierre su caja antes de eliminarlo.');
+  const u=cargarUsuarios().find(x=>x.id===id);
+  if(!u||!confirm('¿Eliminar el acceso del usuario '+u.usuario+'? Su cuenta en Authentication deberá eliminarse por separado desde Firebase Console si ya no se necesita.'))return;
+  try{await deleteDoc(doc(firestoreGMC,'perfiles',id));alert('Se revocó el acceso en Firestore. La cuenta de Authentication continúa existente hasta su eliminación manual.');}
+  catch(err){alert(mensajeFirebaseGMC(err));}
+};
+// Cambio de nombre y contraseña de administrador: refleja los cambios en Firebase.
+window.guardarEdicionAdministrador=async()=>{
+  if(!adminAutenticado||firebaseRolGMC!=='admin'||!edicionAdministradorIdentificada)return;
+  const cred=JSON.parse(localStorage.getItem(ADMIN_AUTH_KEY)||'null');
+  const nombre=document.getElementById('adminEditarNombre')?.value.trim()||'';
+  const anterior=document.getElementById('adminEditarClaveAnterior')?.value||'';
+  const nueva=document.getElementById('adminEditarClaveNueva')?.value||'';
+  const confirmar=document.getElementById('adminEditarClaveConfirmar')?.value||'';
+  if(!nombre||!cred||!anterior||await hashClaveAdmin(anterior,cred.sal)!==cred.hash)return alert('Identidad o clave del administrador incorrectas.');
+  if(nueva&&(nueva.length<8||nueva!==confirmar))return alert('La nueva clave debe tener al menos 8 caracteres y coincidir.');
+  try{
+    await reauthenticateWithCredential(firebaseAuthGMC.currentUser,EmailAuthProvider.credential(firebaseAuthGMC.currentUser.email,anterior));
+    if(nueva)await updatePassword(firebaseAuthGMC.currentUser,nueva);
+    await updateDoc(doc(firestoreGMC,'perfiles',firebaseAuthGMC.currentUser.uid),{usuario:nombre});
+    const sal=Array.from(crypto.getRandomValues(new Uint8Array(16)),x=>x.toString(16).padStart(2,'0')).join('');
+    localStorage.setItem(ADMIN_AUTH_KEY,JSON.stringify({usuario:nombre,correo:firebaseAuthGMC.currentUser.email,sal,hash:await hashClaveAdmin(nueva||anterior,sal)}));
+    edicionAdministradorIdentificada=false;cerrarModal();renderUsuarios();alert('Administrador actualizado en Firebase.');
+  }catch(e){alert(mensajeFirebaseGMC(e));}
+};
+// Nunca se concede acceso por una sesión guardada en localStorage.
+// En cada recarga se consulta el perfil remoto y se respetan las reglas Firestore.
+onAuthStateChanged(firebaseAuthGMC,async user=>{
+  if(!user||gmcEfectuandoSalida||inicioPendienteGMC)return;
+  try{
+    const snap=await getDoc(doc(firestoreGMC,'perfiles',user.uid));
+    if(!snap.exists()||snap.data().activo!==true){await signOut(firebaseAuthGMC);return;}
+    if(snap.data().rol==='admin'&&!localStorage.getItem(ADMIN_AUTH_KEY)){await signOut(firebaseAuthGMC);return;}
+    if(!document.body.classList.contains('sesion-bloqueada'))return;
+    await establecerUsuarioFirebaseGMC(user,snap.data());
+  }catch(e){console.warn('Sesión Firebase sin autorización:',e);await signOut(firebaseAuthGMC).catch(()=>{});}
+});
+// Este archivo de PRUEBAS continúa sin lecturas ni escrituras de datos contables en Firestore.
+bloquearFirebaseGMC();
 
-  const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
-  const auth = getAuth(app);
-  const firestore = getFirestore(app);
-  // Disponibles para la siguiente etapa de pruebas, sin activar sincronización.
-  window.gmcFirebase = { app, auth, firestore };
 </script>
 </body>
 </html>
