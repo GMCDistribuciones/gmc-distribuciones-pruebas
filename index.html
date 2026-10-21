@@ -3747,10 +3747,11 @@ function modalEntradaFirebaseGMC(tipo='usuario'){
     return;
   }
   const admin=tipo==='admin';
+  const primeraConfiguracion=!localStorage.getItem(ADMIN_AUTH_KEY);
   openModal(admin?'Acceso del administrador · Firebase':'Ingreso de usuario · Firebase',`
     <p class="note">Autenticación centralizada mediante Firebase. Sus ventas y demás datos continúan en el almacenamiento local aislado de estas pruebas.</p>
     <div class="row"><div class="c6"><label>Correo electrónico</label><input id="fbLoginEmail" type="email" autocomplete="username"></div><div class="c6"><label>Contraseña</label><input id="fbLoginPass" type="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')gmcIngresarFirebase('${admin?'admin':'usuario'}')"></div></div>
-    <div class="actions" style="margin-top:12px"><button class="btn btn-primary" onclick="gmcIngresarFirebase('${admin?'admin':'usuario'}')">Ingresar</button>${admin?'':'<button class="btn btn-light" onclick="abrirAccesoAdmin()">Ingresar como administrador</button>'}<button class="btn btn-light" onclick="gmcMostrarRegistroFirebase()">Primera configuración</button></div>`);
+    <div class="actions" style="margin-top:12px"><button class="btn btn-primary" onclick="gmcIngresarFirebase('${admin?'admin':'usuario'}')">Ingresar</button>${admin?'<button class="btn btn-light" onclick="abrirLoginUsuario()">Ingresar como usuario</button>':'<button class="btn btn-light" onclick="abrirAccesoAdmin()">Ingresar como administrador</button>'}${primeraConfiguracion?'<button class="btn btn-light" onclick="gmcMostrarRegistroFirebase()">Primera configuración</button>':''}</div>`);
   document.getElementById('fbLoginEmail')?.focus();
 }
 function bloquearFirebaseGMC(tipo='usuario'){
@@ -3926,17 +3927,12 @@ window.guardarEdicionAdministrador=async()=>{
     edicionAdministradorIdentificada=false;cerrarModal();renderUsuarios();alert('Administrador actualizado en Firebase.');
   }catch(e){alert(mensajeFirebaseGMC(e));}
 };
-// Nunca se concede acceso por una sesión guardada en localStorage.
-// En cada recarga se consulta el perfil remoto y se respetan las reglas Firestore.
-onAuthStateChanged(firebaseAuthGMC,async user=>{
-  if(!user||gmcEfectuandoSalida||inicioPendienteGMC)return;
-  try{
-    const snap=await getDoc(doc(firestoreGMC,'perfiles',user.uid));
-    if(!snap.exists()||snap.data().activo!==true){await signOut(firebaseAuthGMC);return;}
-    if(snap.data().rol==='admin'&&!localStorage.getItem(ADMIN_AUTH_KEY)){await signOut(firebaseAuthGMC);return;}
-    if(!document.body.classList.contains('sesion-bloqueada'))return;
-    await establecerUsuarioFirebaseGMC(user,snap.data());
-  }catch(e){console.warn('Sesión Firebase sin autorización:',e);await signOut(firebaseAuthGMC).catch(()=>{});}
+// En cada apertura se exige elegir e identificar al usuario; no se reabre
+// automáticamente la última sesión de Firebase (administrador o vendedor).
+// Si Firebase cierra inesperadamente una sesión activa, se vuelve al acceso.
+onAuthStateChanged(firebaseAuthGMC,user=>{
+  if(gmcEfectuandoSalida||inicioPendienteGMC)return;
+  if(!user&&!document.body.classList.contains('sesion-bloqueada'))bloquearFirebaseGMC();
 });
 // ETAPA 3 - Solo fichas maestras de PRODUCTOS y CLIENTES en Cloud Firestore.
 // Ventas, stock consumido, compras, abonos, cheques y caja continúan LOCALES.
@@ -4439,7 +4435,15 @@ window.gmcGuardarDocumentoVentaFirebase=async()=>{
 };
 // ETAPA 5: ajustes de stock y asignaciones se sincronizan en Firestore.
 // Ventas y su consumo de stock en Firestore. Compras, abonos, devoluciones y cierres siguen locales.
-bloquearFirebaseGMC();
+// Esperar la restauración inicial de Authentication antes de mostrar el ingreso:
+// evita que una sesión previa de administrador salte el selector de usuario.
+firebaseAuthGMC.authStateReady().then(async()=>{
+  if(firebaseAuthGMC.currentUser)await signOut(firebaseAuthGMC);
+  bloquearFirebaseGMC();
+}).catch(error=>{
+  console.warn('No se pudo comprobar la sesión inicial de Firebase:',error);
+  bloquearFirebaseGMC();
+});
 
 </script>
 </body>
