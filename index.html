@@ -713,6 +713,8 @@
     </section>
 
     <section id="cierres" class="section">
+      <p class="note" id="gmcCierresEstadoAdmin">Conectando cierres de caja con Firestore…</p>
+      <div class="note" id="gmcCierrePendienteAdmin" style="display:none;margin:8px 0"></div>
       <div class="grid g2">
         <div class="card">
           <h3>Cierre diario por usuario</h3>
@@ -724,7 +726,7 @@
             <div class="c12"><label>Observaciones</label><textarea id="cObs"></textarea></div>
           </div>
           <button class="btn btn-success" id="btnGenerarCierre" style="margin-top:10px" onclick="generarCierre()">Cerrar día del usuario</button>
-          <p class="note">Se cierra únicamente la fecha actual del sistema. Puede elegir un usuario o «Cierre general — todos los usuarios». Los abonos de créditos se distinguen del efectivo de ventas directas y se suman al efectivo recibido, sin duplicar el total vendido. El efectivo recibido se compara con el efectivo del cierre diario para comprobar el cuadre de caja.</p>
+          <p class="note">Etapa 7: los cierres se confirman en Firestore. Los gastos operativos todavía son locales y pueden variar entre dispositivos; compruebe el efectivo recibido antes de cerrar. Se cierra únicamente la fecha actual del sistema. Puede elegir un usuario o «Cierre general — todos los usuarios». Los abonos de créditos se distinguen del efectivo de ventas directas y se suman al efectivo recibido, sin duplicar el total vendido. El efectivo recibido se compara con el efectivo del cierre diario para comprobar el cuadre de caja.</p>
         </div>
         <div class="card"><h3>Resumen del cierre seleccionado · Hoy</h3><div id="previewCierre"></div></div>
       </div>
@@ -742,9 +744,11 @@
       </div>
     </section>
     <section id="miCierre" class="section">
+      <p class="note" id="gmcCierresEstadoVendedor">Conectando cierres de caja con Firestore…</p>
+      <div class="note" id="gmcCierrePendienteVendedor" style="display:none;margin:8px 0"></div>
       <div class="card">
         <h3>🔒 Mi cierre de caja · Hoy</h3>
-        <p class="note">El cierre pertenece exclusivamente al usuario conectado y utiliza la fecha actual del sistema. Registra tus ventas y abonos y devuelve al inventario central todas las existencias que te quedaron sin vender.</p>
+        <p class="note">El cierre pertenece exclusivamente al usuario conectado y utiliza la fecha actual de Ecuador. Registra tus ventas y abonos, y devuelve al inventario central las existencias que te quedaron sin vender. Los gastos operativos aún son locales en esta etapa.</p>
         <div id="miCierreResumen"></div>
         <h3 style="margin-top:18px">Stock asignado y sobrantes</h3>
         <div class="table-wrap"><table><thead><tr><th>Producto</th><th>Entregado</th><th>Vendido</th><th>Sobrante</th></tr></thead><tbody id="miCierreStock"></tbody></table></div>
@@ -3330,7 +3334,8 @@ function ofrecerImpresionCierre(c,mensaje){
  openModal('Cierre de caja guardado',`<p class="note">${esc(mensaje)} Puede imprimir el informe ahora o consultar posteriormente el cierre registrado.</p><div class="actions" style="margin-top:14px"><button class="btn btn-primary" onclick="imprimirCierre('${esc(c.id)}')">🖨 Imprimir informe del cierre</button><button class="btn btn-light" onclick="cerrarModal()">Cerrar</button></div>`);
 }
 function generarCierre(){
- if(window.gmcVentasCentralizadas)return alert('El cierre de caja todavía no se guarda en Firestore. No se cerró la caja ni se devolvió stock centralizado. Se habilitará en una etapa posterior.');
+ if(window.gmcCierresCentralizados)return window.gmcGenerarCierreFirebase();
+ if(window.gmcVentasCentralizadas)return alert('No hay cierres centralizados disponibles. No se modificó stock.');
  const fecha=fechaSistemaCierre(),seleccion=document.getElementById('cUsuario').value;
  const general=seleccion===CIERRE_GENERAL;
  if(!general&&(!seleccion||!usuariosCierreHoy(fecha).includes(seleccion)))return alert('Seleccione un usuario con ventas o abonos registrados en la fecha actual.');
@@ -3359,7 +3364,8 @@ function renderMiCierre(){
  if(reimpresion){const cierre=(db.cierres||[]).slice().reverse().find(c=>c.fecha===hoy&&c.usuarioId===usuarioActual.id&&c.tipo==='personal');reimpresion.style.display=cierre?'':'none';if(cierre)reimpresion.dataset.cierreId=cierre.id;else delete reimpresion.dataset.cierreId;}
 }
 function generarMiCierre(){
- if(window.gmcVentasCentralizadas)return alert('El cierre personal y la devolución de sobrantes todavía no están centralizados en Firestore. No se realizó ningún cierre ni movimiento de inventario.');
+ if(window.gmcCierresCentralizados)return window.gmcGenerarMiCierreFirebase();
+ if(window.gmcVentasCentralizadas)return alert('No hay cierres centralizados disponibles. No se modificó stock.');
  if(!usuarioActual||adminAutenticado||document.body.classList.contains('sesion-bloqueada'))return alert('Ingrese con su cuenta personal');
  const u=cargarUsuarios().find(x=>x.id===usuarioActual.id&&x.activo);if(!u)return alert('La cuenta ya no está activa');
  const fecha=fechaSistemaCierre();if(cierreHechoHoyUsuario(u.id))return alert('Ya cerró su caja hoy');
@@ -3970,6 +3976,7 @@ const gmcMaestroEstado=(tipo,texto)=>{
  if(nodo)nodo.textContent=texto;
 };
 function gmcDetenerMaestrosFirebase(){
+ gmcDetenerCierresFirebase();
  if(gmcVentasUnsub){try{gmcVentasUnsub()}catch{}gmcVentasUnsub=null;}
  gmcVentasListas=false;db.ventas=[];
  for(const dejar of gmcMasterUnsubs.splice(0)){try{dejar()}catch{}}
@@ -3990,6 +3997,7 @@ function gmcSuscribirMaestrosFirebase(uidSesion){
  gmcMasterSesion=uidSesion;
  gmcSuscribirAsignacionesFirebase(uidSesion);
  gmcSuscribirVentasFirebase(uidSesion);
+ gmcSuscribirCierresFirebase(uidSesion);
  for(const tipo of ['productos','clientes']){
   db[tipo]=[];
   gmcMaestroEstado(tipo,'Conectando con Firestore…');
@@ -4132,7 +4140,7 @@ function gmcSuscribirAsignacionesFirebase(uidSesion){
   db.stockUsuarios=snap.docs.map(d=>({...d.data(),id:d.id}));
   gmcAsignacionesListas=!snap.metadata.fromCache;
   gmcEstadoInventario(snap.metadata.fromCache?'Asignaciones en caché; esperando confirmación del servidor. No realice movimientos.':
-   snap.metadata.hasPendingWrites?'Cambios pendientes de confirmación bancaria de datos.':'Inventario y asignaciones conectados a Cloud Firestore · '+db.stockUsuarios.length+' registro(s) visibles. Cierres y Caja Bancos siguen locales.');
+   snap.metadata.hasPendingWrites?'Cambios pendientes de confirmación bancaria de datos.':'Inventario y asignaciones conectados a Cloud Firestore · '+db.stockUsuarios.length+' registro(s) visibles. Cierres: Etapa 7; Caja Bancos local.');
   try{localStorage.setItem(KEY,JSON.stringify(db))}catch{}
   renderAll();
  },err=>{
@@ -4287,7 +4295,7 @@ function gmcSuscribirVentasFirebase(uidSesion){
   if(firebaseAuthGMC.currentUser?.uid!==uidSesion||gmcMasterSesion!==uidSesion)return;
   db.ventas=snap.docs.map(d=>({...d.data(),id:d.id}));
   gmcVentasListas=!snap.metadata.fromCache&&!snap.metadata.hasPendingWrites;
-  gmcEstadoVentas(snap.metadata.fromCache?'Ventas en caché; esperando confirmación del servidor.':snap.metadata.hasPendingWrites?'Hay escrituras de ventas pendientes de confirmar en Firestore.':'Ventas, abonos y cartera conectados a Firestore · '+db.ventas.length+' registro(s). Cierres y Caja Bancos aún no son centrales.');
+  gmcEstadoVentas(snap.metadata.fromCache?'Ventas en caché; esperando confirmación del servidor.':snap.metadata.hasPendingWrites?'Hay escrituras de ventas pendientes de confirmar en Firestore.':'Ventas, abonos y cartera conectados a Firestore · '+db.ventas.length+' registro(s). Cierres: Etapa 7; Caja Bancos aún local.');
   try{localStorage.setItem(KEY,JSON.stringify(db));}catch(e){console.warn('Respaldo de prueba',e);}
   gmcMostrarVentaPendiente();gmcMostrarAbonoPendiente();renderAll();
  },err=>{if(gmcMasterSesion!==uidSesion)return;db.ventas=[];gmcVentasListas=false;gmcEstadoVentas('Error al consultar ventas: '+mensajeFirebaseGMC(err));console.warn('Ventas Firestore',err);renderAll();});
@@ -4295,7 +4303,7 @@ function gmcSuscribirVentasFirebase(uidSesion){
 }
 function gmcExigirVentaCentral(){
  if(!firebaseAuthGMC.currentUser||document.body.classList.contains('sesion-bloqueada'))throw Error('Primero inicie sesión con Firebase.');
- if(!navigator.onLine||!gmcMasterListos.productos||!gmcMasterListos.clientes||!gmcAsignacionesListas||!gmcVentasListas)throw Error('Necesita conexión con Firestore y datos confirmados del servidor. No se registró la venta.');
+ if(!navigator.onLine||!gmcCierresListos||!gmcMasterListos.productos||!gmcMasterListos.clientes||!gmcAsignacionesListas||!gmcVentasListas)throw Error('Necesita conexión con Firestore y datos confirmados del servidor. No se registró la venta.');
  if(gmcVentaEnCurso)throw Error('Una venta ya se está procesando. Espere la confirmación.');
  if(gmcPendienteVenta())throw Error('Hay una venta pendiente de verificar. Pulse «Revisar y reintentar venta pendiente» para evitar duplicados.');
  if(usuarioActual&&!adminAutenticado&&cierreHechoHoyUsuario(usuarioActual.id))throw Error('Su caja ya fue cerrada hoy.');
@@ -4330,6 +4338,10 @@ async function gmcEjecutarVentaFirestore(pendiente){
     if(ya.data().usuarioVentaId!==u.uid||ya.data().etapaFirebase!=='etapa5')throw Error('Identificador de venta ya utilizado.');
     return {existente:true,numero:ya.data().numero};
    }
+   const cierreHoyRef=doc(firestoreGMC,'cierresCaja',u.uid+'_'+today());
+   const cierreGeneralRef=doc(firestoreGMC,'cierresCaja','general_'+today());
+   const cierreHoy=await tx.get(cierreHoyRef),cierreGeneral=await tx.get(cierreGeneralRef);
+   if(cierreHoy.exists()||cierreGeneral.exists())throw Error('La caja del día ya fue cerrada en Firestore. No se registró una venta nueva.');
    const contador=await tx.get(contadorRef);
    // Todas las lecturas deben ocurrir ANTES de cualquier escritura de la transacción.
    const refs=vendedor?(db.stockUsuarios||[]).filter(a=>a.estado==='abierta'&&a.usuarioId===u.uid&&cantidades.has(a.productoId)).map(a=>({id:a.id,productoId:a.productoId,ref:doc(firestoreGMC,'stockUsuarios',a.id)})):[...cantidades.keys()].map(id=>({id,productoId:id,ref:doc(firestoreGMC,'productos',id)}));
@@ -4474,7 +4486,7 @@ function gmcMostrarAbonoPendiente(){
 }
 function gmcExigirAbonoCentral(){
  if(!firebaseAuthGMC.currentUser||document.body.classList.contains('sesion-bloqueada'))throw Error('Inicie sesión con Firebase.');
- if(!navigator.onLine||!gmcVentasListas)throw Error('Se necesita conexión confirmada a Firestore para registrar un abono. No se modificó la factura.');
+ if(!navigator.onLine||!gmcCierresListos||!gmcVentasListas)throw Error('Se necesita conexión confirmada a Firestore para registrar un abono. No se modificó la factura.');
  if(gmcAbonoEnCurso)throw Error('Ya se está procesando un abono. Espere.');
  if(gmcPendienteAbono())throw Error('Existe un abono pendiente. Use «Revisar y reintentar el mismo abono» para evitar duplicados.');
 }
@@ -4517,6 +4529,8 @@ async function gmcProcesarAbonoPendiente(pendiente){
  try{
   const referencia=doc(firestoreGMC,'ventas',pendiente.ventaId);
   const resultado=await runTransaction(firestoreGMC,async tx=>{
+   const cierreHoy=await tx.get(doc(firestoreGMC,'cierresCaja',usuario.uid+'_'+today()));
+   const cierreGeneral=await tx.get(doc(firestoreGMC,'cierresCaja','general_'+today()));
    const documento=await tx.get(referencia);
    if(!documento.exists())throw Error('La factura ya no existe en Firestore.');
    const v=documento.data();
@@ -4528,6 +4542,7 @@ async function gmcProcesarAbonoPendiente(pendiente){
     if(previo.usuarioId!==usuario.uid||gmcCentavosAbono(previo.valor)!==gmcCentavosAbono(pendiente.abono.valor))throw Error('El identificador del abono ya fue utilizado con datos diferentes.');
     return {existente:true,numero:v.numero||pendiente.numero,saldo:Number(v.saldo||0)};
    }
+   if(cierreHoy.exists()||cierreGeneral.exists())throw Error('La caja del día ya fue cerrada. No se registró otro abono.');
    const saldoCent=gmcCentavosAbono(v.saldo),pagadoCent=gmcCentavosAbono(v.abono||0),monto=gmcCentavosAbono(pendiente.abono.valor);
    if(!Number.isSafeInteger(saldoCent)||!Number.isSafeInteger(pagadoCent)||!Number.isSafeInteger(monto)||monto<=0||monto>saldoCent)
     throw Error('El saldo fue modificado o resulta insuficiente. Revise la factura antes de abonar. No se registró un nuevo cobro.');
@@ -4577,8 +4592,225 @@ window.gmcDescartarAbonoCreditoFirebase=async()=>{
   alert('Intento descartado. No se ha modificado el saldo ni el historial en Firestore.');
  }catch(error){alert('No fue posible comprobar con Firestore. Se conserva el intento pendiente. '+mensajeFirebaseGMC(error));}
 };
+
+// ETAPA 7 — Cierres de caja y retorno de sobrantes con una sola transacción Firestore.
+// Mantiene las operaciones locales no centralizadas fuera de esta transacción.
+window.gmcCierresCentralizados=true;
+let gmcCierresUnsub=null;
+let gmcCierresListos=false;
+let gmcCierreEnCurso=false;
+const gmcIdCierre=(usuarioId,fecha)=>usuarioId+'_'+fecha;
+const gmcClaveCierrePendiente=()=> 'gmc_cierre_pendiente_etapa7_'+(firebaseAuthGMC.currentUser?.uid||'sin_sesion');
+function gmcPendienteCierre(){try{return JSON.parse(localStorage.getItem(gmcClaveCierrePendiente())||'null');}catch{return null;}}
+function gmcAvisoCierres(mensaje){
+ for(const id of ['gmcCierresEstadoAdmin','gmcCierresEstadoVendedor']){
+  const n=document.getElementById(id);if(n)n.textContent=mensaje;
+ }
+}
+function gmcMostrarCierrePendiente(){
+ const pendiente=gmcPendienteCierre();
+ for(const id of ['gmcCierrePendienteAdmin','gmcCierrePendienteVendedor']){
+  const n=document.getElementById(id);if(!n)continue;
+  n.style.display=pendiente?'':'none';
+  n.innerHTML=pendiente?'<strong>⚠️ Cierre pendiente de comprobación: '+esc(pendiente.fecha)+' · '+esc(pendiente.usuario)+'. No intente crear un segundo cierre.</strong><div class="actions" style="margin-top:8px"><button class="btn btn-warning" onclick="gmcReintentarCierreFirebase()">Comprobar y reintentar el mismo cierre</button><button class="btn btn-light" onclick="gmcDescartarCierreFirebase()">Descartar solo si no existe en Firestore</button></div>':'';
+ }
+}
+function gmcDetenerCierresFirebase(){
+ if(gmcCierresUnsub){try{gmcCierresUnsub()}catch{}gmcCierresUnsub=null;}
+ // No se borran silenciosamente cierres históricos que solo estaban en el navegador.
+ db.cierresLocalesHistoricos=Array.isArray(db.cierresLocalesHistoricos)?db.cierresLocalesHistoricos:[];
+ for(const anterior of db.cierres||[]){
+  if(!anterior.etapaFirebase&&!db.cierresLocalesHistoricos.some(c=>c.id===anterior.id))db.cierresLocalesHistoricos.push(anterior);
+ }
+ gmcCierresListos=false;
+ db.cierres=[];
+ gmcAvisoCierres('Inicie sesión para consultar cierres en Firestore.');
+ gmcMostrarCierrePendiente();
+}
+function gmcSuscribirCierresFirebase(uidSesion){
+ gmcCierresListos=false;db.cierres=[];
+ gmcAvisoCierres('Conectando cierres de caja a Cloud Firestore…');
+ const origen=firebaseRolGMC==='admin'?collection(firestoreGMC,'cierresCaja'):query(collection(firestoreGMC,'cierresCaja'),where('usuarioId','==',uidSesion));
+ gmcCierresUnsub=onSnapshot(origen,{includeMetadataChanges:true},snap=>{
+  if(gmcMasterSesion!==uidSesion||firebaseAuthGMC.currentUser?.uid!==uidSesion)return;
+  db.cierres=snap.docs.map(d=>({...d.data(),id:d.id}));
+  gmcCierresListos=!snap.metadata.fromCache&&!snap.metadata.hasPendingWrites;
+  gmcAvisoCierres(snap.metadata.fromCache?'Cierres en caché. Espere confirmación del servidor antes de cerrar.':snap.metadata.hasPendingWrites?'Hay cierres pendientes de confirmar.':'Cierres conectados a Firestore · '+db.cierres.length+' registro(s) visibles.');
+  try{localStorage.setItem(KEY,JSON.stringify(db))}catch(error){console.warn('Respaldo local de cierres',error)}
+  gmcMostrarCierrePendiente();renderAll();
+ },error=>{
+  if(gmcMasterSesion!==uidSesion)return;
+  gmcCierresListos=false;db.cierres=[];
+  gmcAvisoCierres('No se pudo leer cierres de Firestore: '+mensajeFirebaseGMC(error));renderAll();
+ });
+ gmcMostrarCierrePendiente();
+}
+function gmcExigirCierreFirebase(){
+ if(!firebaseAuthGMC.currentUser||document.body.classList.contains('sesion-bloqueada'))throw Error('Inicie sesión con Firebase.');
+ if(!navigator.onLine||!gmcCierresListos||!gmcVentasListas||!gmcAsignacionesListas||!gmcMasterListos.productos)throw Error('Espere la sincronización confirmada de cierres, ventas, productos y asignaciones. Se necesita conexión a Firestore.');
+ if(gmcCierreEnCurso)throw Error('Ya se está confirmando un cierre de caja.');
+ if(gmcPendienteCierre())throw Error('Hay un cierre pendiente. Utilice «Comprobar y reintentar el mismo cierre».');
+ if(gmcPendienteVenta()||gmcPendienteAbono()||gmcVentaEnCurso||gmcAbonoEnCurso||gmcMovimientoEnCurso)throw Error('Existe una operación pendiente. Primero compruebe esa operación antes de cerrar la caja.');
+}
+function gmcResumenParaCerrar(fecha,usuario,usuarioId,tipo){
+ const r=tipo==='general'?resumenCierreGeneral(fecha):resumenCierreUsuario(fecha,usuario,usuarioId);
+ const copia={id:gmcIdCierre(usuarioId,fecha),fecha,usuarioId,usuario,tipo,creado:new Date().toISOString(),
+ ventas:r.ventas,gastosOperativos:r.gastosOperativos,ventasNetas:r.ventasNetas,
+ detalleGastosOperativos:r.detalleGastosOperativos,numVentas:r.numVentas,
+ efectivoVentas:r.efectivoVentas,transferencias:r.transferencias,
+ chequesRecibidos:r.chequesRecibidos,chequesVentas:r.chequesVentas,chequesAbonos:r.chequesAbonos,
+ chequesDetalle:r.chequesDetalle,abonosPosterioresEfectivo:r.abonosPosterioresEfectivo,
+ abonosPosterioresTransferencia:r.abonosPosterioresTransferencia,ventasCredito:r.ventasCredito,
+ abonosIniciales:r.abonosIniciales,abonosPosteriores:r.abonosPosteriores,
+ abonosCredito:r.abonosCredito,efectivoEsperado:r.efectivoEsperado,sinFormaCobro:r.sinFormaCobro,
+ saldoCreditoDia:r.saldoCreditoDia,stockDevuelto:[],devoluciones:[],
+ detalleImpresion:detalleVentasImpresionCierre(r.detalleVentas)};
+ if(tipo==='general')copia.numUsuarios=r.numUsuarios;
+ return copia;
+}
+async function gmcEjecutarCierreFirestore(pendiente){
+ const auth=firebaseAuthGMC.currentUser;
+ if(!auth||pendiente.operadorId!==auth.uid)throw Error('Este cierre pertenece a otra sesión Firebase.');
+ if(!navigator.onLine||!gmcCierresListos||!gmcVentasListas||!gmcAsignacionesListas||!gmcMasterListos.productos)throw Error('Sin conexión confirmada a Firestore. Se conserva el cierre pendiente.');
+ if(gmcCierreEnCurso)return;
+ gmcCierreEnCurso=true;
+ try{
+  const cierre=pendiente.cierre,refCierre=doc(firestoreGMC,'cierresCaja',cierre.id);
+  const resultado=await runTransaction(firestoreGMC,async tx=>{
+   // Un ID estable por usuario y fecha permite reconocer cualquier reintento.
+   const previo=await tx.get(refCierre);
+   if(previo.exists()){
+    if(previo.data().operadorId!==auth.uid&&firebaseRolGMC!=='admin')throw Error('El cierre existente pertenece a otra cuenta.');
+    return {existente:true,cierre:{...previo.data(),id:refCierre.id}};
+   }
+   if(pendiente.fecha!==today())throw Error('La fecha del cierre pendiente ya no corresponde a hoy. No se guardó un cierre para otra fecha.');
+   if(cierre.tipo==='general'){
+    if(firebaseRolGMC!=='admin')throw Error('Solo el administrador puede cerrar el día general.');
+   }else if(cierre.usuarioId!==auth.uid&&firebaseRolGMC!=='admin')throw Error('Solo puede cerrar su propia caja.');
+   if(cierre.tipo!=='general'){
+    const general=await tx.get(doc(firestoreGMC,'cierresCaja','general_'+cierre.fecha));
+    if(general.exists())throw Error('El día general ya fue cerrado.');
+   }
+   // Cierre personal/individual: solo documentos del usuario con asignación abierta.
+   const stock=cierre.tipo==='general'?[]:(db.stockUsuarios||[]).filter(a=>a.estado==='abierta'&&a.usuarioId===cierre.usuarioId);
+   if(stock.length>8)throw Error('Este vendedor tiene más de 8 asignaciones abiertas. No se cerró la caja: solicite al administrador consolidar las asignaciones antes de continuar.');
+   const asignaciones=[];
+   for(const a of stock)asignaciones.push({id:a.id,ref:doc(firestoreGMC,'stockUsuarios',a.id),snap:await tx.get(doc(firestoreGMC,'stockUsuarios',a.id))});
+   const productoIds=[...new Set(asignaciones.filter(a=>a.snap.exists()&&Number(a.snap.data().restante)>0).map(a=>a.snap.data().productoId))];
+   const productos=new Map();
+   for(const pid of productoIds){const ref=doc(firestoreGMC,'productos',pid);productos.set(pid,{ref,snap:await tx.get(ref)});}
+   // Todas las lecturas se hicieron antes de escribir: atomicidad con las ventas concurrentes.
+   const devoluciones=[],totales=new Map();
+   for(const a of asignaciones){
+    if(!a.snap.exists())throw Error('Una asignación fue eliminada en Firestore. No se realizó el cierre.');
+    const reg=a.snap.data();
+    if(reg.usuarioId!==cierre.usuarioId||reg.estado!=='abierta')throw Error('Una asignación cambió de estado. Verifique las existencias y reintente.');
+    const cantidad=Number(reg.restante);
+    if(!Number.isFinite(cantidad)||cantidad<0||cantidad>Number(reg.cantidad)+0.000001)throw Error('Asignación inconsistente en Firestore. No se modificó el inventario.');
+    devoluciones.push({id:a.id,productoId:reg.productoId,cantidad:gmcRedondear6(cantidad)});
+    if(cantidad>0)totales.set(reg.productoId,gmcRedondear6((totales.get(reg.productoId)||0)+cantidad));
+   }
+   const stockDevuelto=[];
+   for(const [pid,cantidad] of totales){
+    const p=productos.get(pid);
+    if(!p?.snap.exists())throw Error('Producto no encontrado para devolver stock. No se guardó el cierre.');
+    const datos=p.snap.data(),stockActual=Number(datos.stock),asignadoActual=Number(datos.unidadesAsignadas||0);
+    if(!Number.isFinite(stockActual)||!Number.isFinite(asignadoActual)||asignadoActual+0.000001<cantidad)throw Error('No cuadran las unidades asignadas del producto '+(datos.nombre||pid)+'. No se cerró la caja.');
+    stockDevuelto.push({productoId:pid,nombre:datos.nombre||pid,cantidad});
+   }
+   const definitivo={...cierre,operadorId:auth.uid,etapaFirebase:'etapa7',devoluciones,stockDevuelto};
+   tx.set(refCierre,definitivo);
+   for(const a of asignaciones){
+    const d=a.snap.data();
+    tx.update(a.ref,{restante:0,devuelto:gmcRedondear6(Number(d.restante)),estado:'cerrada',fechaCierre:cierre.fecha,ultimoCierreId:cierre.id});
+   }
+   for(const [pid,cantidad] of totales){
+    const p=productos.get(pid),d=p.snap.data();
+    tx.update(p.ref,{stock:gmcRedondear6(Number(d.stock)+cantidad),unidadesAsignadas:gmcRedondear6(Number(d.unidadesAsignadas||0)-cantidad),ultimoCierreId:cierre.id});
+   }
+   return {existente:false,cierre:definitivo};
+  });
+  localStorage.removeItem('gmc_cierre_pendiente_etapa7_'+pendiente.operadorId);
+  gmcMostrarCierrePendiente();
+  // La suscripción Firestore actualiza el historial; se imprime el cierre que confirmó el servidor.
+  if(resultado.existente)alert('Este cierre ya estaba confirmado en Firestore. No se devolvió inventario por segunda vez.');
+  else alert('Cierre confirmado en Firestore · '+resultado.cierre.usuario+' · '+resultado.cierre.fecha+'. Sobrantes retornados una sola vez.');
+  // La información puede llegar después en onSnapshot; mostrar impresión cuando esté disponible.
+  renderAll();
+ }catch(error){
+  gmcMostrarCierrePendiente();
+  alert('No fue posible confirmar el cierre: '+(error.message||mensajeFirebaseGMC(error))+' El cierre pendiente mantiene su identificador. NO realice un segundo cierre.');
+ }finally{gmcCierreEnCurso=false;}
+}
+function gmcPrepararCierreFirebase(tipo,usuarioId,usuario,efectivo,obs){
+ const fecha=fechaSistemaCierre();
+ const existente=(db.cierres||[]).find(c=>c.id===gmcIdCierre(usuarioId,fecha));
+ if(existente)throw Error('Este usuario ya tiene un cierre confirmado en Firestore para hoy. No puede repetirlo.');
+ if((db.cierres||[]).some(c=>c.id==='general_'+fecha)&&tipo!=='general')throw Error('El cierre general del día ya fue confirmado.');
+ const c=gmcResumenParaCerrar(fecha,usuario,usuarioId,tipo);
+ c.efectivo=efectivo;
+ c.diferencia=efectivo===null?null:redondeoCierre(efectivo-c.efectivoEsperado);
+ c.obs=obs;
+ const pendiente={operadorId:firebaseAuthGMC.currentUser.uid,fecha,usuario,cierre:c};
+ localStorage.setItem(gmcClaveCierrePendiente(),JSON.stringify(pendiente));
+ gmcMostrarCierrePendiente();
+ return pendiente;
+}
+window.gmcGenerarMiCierreFirebase=async()=>{
+ try{
+  gmcExigirCierreFirebase();
+  if(firebaseRolGMC!=='vendedor'||!usuarioActual||!usuarioActual.modulos.includes('ventas'))throw Error('Ingrese con su usuario vendedor autorizado.');
+  const campo=document.getElementById('miCierreEfectivo').value.trim();
+  const contado=campo===''?null:Number(campo);
+  if(contado!==null&&(!Number.isFinite(contado)||contado<0||gmcMonto2(contado)!==contado))throw Error('Ingrese un efectivo contado válido con dos decimales.');
+  const sobrante=stockPendienteUsuario(usuarioActual.id).reduce((n,a)=>n+Number(a.restante||0),0);
+  if(!confirm('¿Cerrar la caja de '+usuarioActual.usuario+' del día '+today()+' y devolver '+sobrante.toFixed(2)+' unidades al stock central de Firestore? Este cierre será definitivo para hoy.'))return;
+  const pendiente=gmcPrepararCierreFirebase('personal',usuarioActual.id,usuarioActual.usuario,contado,document.getElementById('miCierreObs').value.trim());
+  await gmcEjecutarCierreFirestore(pendiente);
+ }catch(e){alert(e.message||mensajeFirebaseGMC(e));}
+};
+window.gmcGenerarCierreFirebase=async()=>{
+ try{
+  gmcExigirCierreFirebase();
+  if(firebaseRolGMC!=='admin'||!adminAutenticado)throw Error('Solo el administrador puede guardar este cierre.');
+  const fecha=fechaSistemaCierre(),seleccion=document.getElementById('cUsuario').value;
+  const general=seleccion===CIERRE_GENERAL;
+  if(!general&&(!seleccion||!usuariosCierreHoy(fecha).includes(seleccion)))throw Error('Seleccione un usuario con operaciones o inventario asignado hoy.');
+  const usuario=general?NOMBRE_CIERRE_GENERAL:seleccion;
+  const vendedor=!general?cargarUsuarios().find(u=>u.usuario===seleccion&&u.activo):null;
+  const usuarioId=general?'general':(vendedor?.id||firebaseAuthGMC.currentUser.uid);
+  if(!general&&!vendedor&&seleccion!==(JSON.parse(localStorage.getItem(ADMIN_AUTH_KEY)||'null')?.usuario||'ADMINISTRADOR'))throw Error('No se encontró un perfil de vendedor activo para este cierre.');
+  const dato=document.getElementById('cEfectivo').value.trim(),efectivo=Number(dato);
+  if(dato===''||!Number.isFinite(efectivo)||efectivo<0||gmcMonto2(efectivo)!==efectivo)throw Error('Ingrese el efectivo recibido con máximo dos decimales. Si es cero, escriba 0.');
+  if(general){
+   const abiertos=(db.stockUsuarios||[]).filter(a=>a.estado==='abierta');
+   if(abiertos.length)throw Error('Antes del cierre general deben cerrarse las cajas personales con asignaciones abiertas ('+abiertos.length+' pendientes). No se alteró el inventario.');
+  }
+  if(!confirm('¿Guardar en Firestore el cierre '+(general?'general':'de '+usuario)+' del '+fecha+'? '+(general?'No devuelve existencias.':'Devolverá el stock sobrante asignado al vendedor.')+' No se podrá duplicar.'))return;
+  const pendiente=gmcPrepararCierreFirebase(general?'general':'individual',usuarioId,usuario,efectivo,document.getElementById('cObs').value.trim());
+  await gmcEjecutarCierreFirestore(pendiente);
+ }catch(e){alert(e.message||mensajeFirebaseGMC(e));}
+};
+window.gmcReintentarCierreFirebase=async()=>{
+ const p=gmcPendienteCierre();if(!p)return alert('No hay cierre pendiente.');
+ try{await gmcEjecutarCierreFirestore(p);}catch(e){alert('El cierre sigue pendiente. '+(e.message||mensajeFirebaseGMC(e)));}
+};
+window.gmcDescartarCierreFirebase=async()=>{
+ const p=gmcPendienteCierre();if(!p)return alert('No hay cierre pendiente.');
+ if(gmcCierreEnCurso)return alert('Espere a que finalice la comprobación del cierre.');
+ if(p.operadorId!==firebaseAuthGMC.currentUser?.uid)return alert('El cierre pendiente pertenece a otra sesión.');
+ if(!navigator.onLine)return alert('Se necesita conexión antes de descartar.');
+ try{
+  const s=await getDocFromServer(doc(firestoreGMC,'cierresCaja',p.cierre.id));
+  if(s.exists())return alert('Este cierre ya existe en Firestore. No lo descarte. Utilice «Comprobar y reintentar».');
+  if(!confirm('Firestore confirma que este cierre NO está registrado. ¿Descartar únicamente este intento pendiente?'))return;
+  localStorage.removeItem(gmcClaveCierrePendiente());gmcMostrarCierrePendiente();
+  alert('Intento descartado; no se ha modificado inventario ni caja en Firestore.');
+ }catch(e){alert('No fue posible verificar Firestore. Se conserva el cierre pendiente. '+mensajeFirebaseGMC(e));}
+};
+
 // ETAPA 5: ventas y sus descuentos de stock; ETAPA 6: abonos y saldos centrales.
-// Compras, devoluciones, cierres y Caja Bancos continúan sin centralizar.
+// Etapa 7: cierres y retorno de sobrantes centralizados; compras, gastos operativos, devoluciones y Caja Bancos siguen locales.
 // Esperar la restauración inicial de Authentication antes de mostrar el ingreso:
 // evita que una sesión previa de administrador salte el selector de usuario.
 firebaseAuthGMC.authStateReady().then(async()=>{
