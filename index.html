@@ -452,6 +452,7 @@
         <div class="card kpi"><small>Valor del inventario central</small><strong id="invValor">$0.00</strong></div>
       </div>
       <p class="note" id="invStockConsolidado" style="margin:12px 0 0"></p>
+      <p class="muted" id="gmcInventarioEstado" style="font-size:12px;margin:8px 0">Esperando inventario central Firebase…</p>
       <div class="card" style="margin-top:14px">
         <div class="actions" style="justify-content:space-between"><h3>Inventario</h3><div class="actions"><button class="btn btn-light" onclick="imprimirTodoInventario()">🖨 Imprimir inventario</button><button class="btn btn-primary" onclick="modalInventario()">Ajuste de inventario</button></div></div>
         <div class="table-wrap"><table><thead><tr><th>Producto</th><th>Stock</th><th>Costo unit.</th><th>Valor</th></tr></thead><tbody id="tbInventario"></tbody></table></div>
@@ -463,6 +464,7 @@
       <div class="card" style="margin-top:14px">
         <div class="actions" style="justify-content:space-between;align-items:center"><h3>Asignación de productos a usuarios</h3><button class="btn btn-warning" onclick="abrirModalAsignacionLote()">+ Nueva asignación</button></div>
         <p class="note">Al entregar productos, las unidades pasan del inventario central al stock del usuario. Sus ventas consumen el stock asignado y el sobrante vuelve al inventario central al cerrar su caja.</p>
+        <p class="muted" id="gmcAsignacionesEstado" style="font-size:12px">Esperando asignaciones de Firestore…</p>
         <div id="asigFormularioResguardo" style="display:none">
           <div id="asigFormularioLote">
             <div class="row">
@@ -1006,7 +1008,7 @@ document.querySelectorAll('.nav-btn').forEach(b=>b.onclick=()=>go(b.dataset.sec)
 function openModal(title,html){devolverFormularioAsignacionLote();document.getElementById('modalTitle').textContent=title;document.getElementById('modalBody').innerHTML=html;document.getElementById('modal').classList.add('show')}
 function cerrarModal(){if(document.body.classList.contains('sesion-bloqueada'))return;window.gmcSalirAutorizacionClienteFirebase?.();devolverFormularioAsignacionLote();edicionAdministradorIdentificada=false;solicitudClientePendiente=null;autorizacionClienteEdicion='';document.getElementById('modal').classList.remove('show')}
 function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
-function deleteBy(tipo,id){if(tipo==='clientes'||tipo==='productos')return window.gmcEliminarMaestroFirebase(tipo,id);if(tipo==='gastos')return solicitarEliminarGastoAdmin(id);if(tipo==='clientes'&&usuarioActual&&!adminAutenticado){if(autorizacionClienteBorrado!==String(id))return solicitarClaveAdministradorCliente('borrar',id);autorizacionClienteBorrado='';}if(tipo==='productos'&&(db.stockUsuarios||[]).some(a=>a.productoId===id&&a.estado==='abierta'&&a.restante>0))return alert('Este producto tiene existencias asignadas a usuarios. Cierre sus cajas antes de eliminarlo.');if(!confirm('¿Eliminar este registro?'))return;audit('ELIMINAR',tipo+' '+id);db[tipo]=db[tipo].filter(x=>x.id!==id);save()}
+function deleteBy(tipo,id){if(tipo==='clientes'||tipo==='productos')return window.gmcEliminarMaestroFirebase(tipo,id);if(tipo==='gastos')return solicitarEliminarGastoAdmin(id);if(tipo==='clientes'&&usuarioActual&&!adminAutenticado){if(autorizacionClienteBorrado!==String(id))return solicitarClaveAdministradorCliente('borrar',id);autorizacionClienteBorrado='';}if(tipo==='productos'&&((db.stockUsuarios||[]).some(a=>a.productoId===id&&a.estado==='abierta'&&a.restante>0)||Number(registro.unidadesAsignadas||0)>0))return alert('Este producto tiene existencias asignadas en Firestore. No puede eliminarlo hasta que regresen al inventario central.');if(!confirm('¿Eliminar este registro?'))return;audit('ELIMINAR',tipo+' '+id);db[tipo]=db[tipo].filter(x=>x.id!==id);save()}
 
 function siguienteCodigoProducto(){
   const usados=new Set(db.productos.map(x=>String(x.codigo||'').trim()));
@@ -3685,7 +3687,7 @@ openModal('Preparando acceso Firebase','<p class="note">Conectando Firebase Auth
 // La facturación, inventario, abonos y cajas continúan aislados en localStorage de PRUEBAS.
 import {initializeApp, getApps, getApp} from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-app.js';
 import {getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, EmailAuthProvider, reauthenticateWithCredential, updatePassword, sendPasswordResetEmail} from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-auth.js';
-import {getFirestore, doc, getDoc, collection, onSnapshot, setDoc, updateDoc, deleteDoc} from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-firestore.js';
+import {getFirestore, doc, getDoc, collection, query, where, onSnapshot, setDoc, updateDoc, deleteDoc, runTransaction} from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-firestore.js';
 const configFirebaseGMC = {
   apiKey:'AIzaSyBtj-y2p3qAYWknIX6J5aK6DAzkD9bOc1s',
   authDomain:'gmcdistribucionesdb.firebaseapp.com',
@@ -3928,6 +3930,9 @@ onAuthStateChanged(firebaseAuthGMC,async user=>{
 let gmcMasterSesion='';
 let gmcMasterUnsubs=[];
 let gmcMasterListos={productos:false,clientes:false};
+let gmcAsignacionesListas=false;
+let gmcAsignacionesUnsub=null;
+let gmcMovimientoEnCurso=false;
 let gmcAdminClienteSecundario=null;
 let gmcCorreoAdminCliente='';
 const gmcMaestroEstado=(tipo,texto)=>{
@@ -3937,6 +3942,10 @@ const gmcMaestroEstado=(tipo,texto)=>{
 function gmcDetenerMaestrosFirebase(){
  for(const dejar of gmcMasterUnsubs.splice(0)){try{dejar()}catch{}}
  gmcMasterSesion='';gmcMasterListos={productos:false,clientes:false};
+ gmcAsignacionesListas=false;
+ if(gmcAsignacionesUnsub){try{gmcAsignacionesUnsub()}catch{}gmcAsignacionesUnsub=null;}
+ db.stockUsuarios=[];
+ gmcEstadoInventario('Inicie sesión para consultar inventario y asignaciones.');
  // La autorización temporal del administrador NO debe subsistir al cerrar sesión.
  window.gmcSalirAutorizacionClienteFirebase?.();
  for(const tipo of ['productos','clientes']){
@@ -3947,6 +3956,7 @@ function gmcDetenerMaestrosFirebase(){
 function gmcSuscribirMaestrosFirebase(uidSesion){
  gmcDetenerMaestrosFirebase();
  gmcMasterSesion=uidSesion;
+ gmcSuscribirAsignacionesFirebase(uidSesion);
  for(const tipo of ['productos','clientes']){
   db[tipo]=[];
   gmcMaestroEstado(tipo,'Conectando con Firestore…');
@@ -4001,7 +4011,25 @@ window.gmcGuardarMaestroFirebase=async(tipo,registro)=>{
  const remoto=(tipo==='clientes'&&anterior&&!adminAutenticado)
    ?getFirestore(gmcAdminClienteSecundario.app):firestoreGMC;
  const referencia=doc(remoto,tipo,dato.id);
- if(anterior)await updateDoc(referencia,dato);
+ if(tipo==='productos'){
+   if(!adminAutenticado && anterior && Number(dato.stock)!==Number(db.productos.find(p=>p.id===dato.id)?.stock))throw Error('Solo el administrador puede modificar existencias centrales.');
+   if(!Number.isFinite(Number(dato.stock))||Number(dato.stock)<0)throw Error('El stock debe ser un número no negativo.');
+   // El stock se confirma dentro de una transacción: no se sobrescriben cambios de otros dispositivos inadvertidamente.
+   const movimiento=doc(remoto,'movimientosInventario',uid());
+   await runTransaction(remoto,async tx=>{
+     const previo=await tx.get(referencia);
+     if(anterior&&!previo.exists())throw Error('El producto ya no existe. Actualice la lista.');
+     if(!anterior&&previo.exists())throw Error('El producto ya existe. Actualice la lista.');
+     if(previo.exists()){
+       const actual=Number(previo.data().stock||0);
+       const visto=Number(db.productos.find(p=>p.id===dato.id)?.stock||0);
+       if(Math.abs(actual-visto)>0.000001)throw Error('Las existencias cambiaron en otro dispositivo. Espere a que se actualicen y repita la operación.');
+       if(!adminAutenticado)dato.stock=actual;
+       tx.update(referencia,dato);
+       if(adminAutenticado&&Math.abs(Number(dato.stock)-actual)>0.000001)tx.set(movimiento,{id:movimiento.id,tipo:'edicion_stock_producto',productoId:dato.id,antes:actual,despues:Number(dato.stock),fecha:new Date().toISOString(),usuarioId:firebaseAuthGMC.currentUser.uid});
+     }else{tx.set(referencia,dato);}
+   });
+ }else if(anterior)await updateDoc(referencia,dato);
  else await setDoc(referencia,dato);
 };
 window.gmcEliminarMaestroFirebase=async(tipo,id)=>{
@@ -4016,7 +4044,7 @@ window.gmcEliminarMaestroFirebase=async(tipo,id)=>{
   if(tipo==='clientes'&&usuarioActual&&!adminAutenticado&&autorizacionClienteBorrado!==String(id)){
    return solicitarClaveAdministradorCliente('borrar',id);
   }
-  if(tipo==='productos'&&(db.stockUsuarios||[]).some(a=>a.productoId===id&&a.estado==='abierta'&&a.restante>0))return alert('Este producto tiene existencias asignadas a usuarios. Cierre sus cajas antes de eliminarlo.');
+  if(tipo==='productos'&&((db.stockUsuarios||[]).some(a=>a.productoId===id&&a.estado==='abierta'&&a.restante>0)||Number(registro.unidadesAsignadas||0)>0))return alert('Este producto tiene existencias asignadas en Firestore. No puede eliminarlo hasta que regresen al inventario central.');
   if(!confirm('¿Eliminar este registro?'))return;
   const remoto=(tipo==='clientes'&&!adminAutenticado)
    ?getFirestore(gmcAdminClienteSecundario.app):firestoreGMC;
@@ -4052,8 +4080,167 @@ window.gmcValidarAdminClienteFirebase=async(clave)=>{
 window.gmcSalirAutorizacionClienteFirebase=()=>{
  if(gmcAdminClienteSecundario){const auth=gmcAdminClienteSecundario.auth;gmcAdminClienteSecundario=null;signOut(auth).catch(()=>{});}
 };
-// Fin ETAPA 3. Ninguna venta, compra, abono ni movimiento de inventario se
-// sincroniza: serán migrados en una etapa específica con transacciones seguras.
+// ETAPA 4: Inventario central y asignaciones mediante transacciones Firestore.
+// Ventas, consumos, compras y cierres todavía NO se sincronizan. No operar ventas reales.
+function gmcEstadoInventario(mensaje){
+ for(const id of ['gmcInventarioEstado','gmcAsignacionesEstado']){
+  const e=document.getElementById(id);if(e)e.textContent=mensaje;
+ }
+}
+function gmcSuscribirAsignacionesFirebase(uidSesion){
+ gmcAsignacionesListas=false;
+ db.stockUsuarios=[];
+ gmcEstadoInventario('Conectando inventario y asignaciones a Firestore…');
+ // El administrador consulta todos los vendedores. Cada vendedor solo consulta los suyos.
+ const vendedor=firebaseRolGMC!=='admin';
+ const fuente=vendedor?query(collection(firestoreGMC,'stockUsuarios'),where('usuarioId','==',uidSesion)):collection(firestoreGMC,'stockUsuarios');
+ gmcAsignacionesUnsub=onSnapshot(fuente,{includeMetadataChanges:true},snap=>{
+  if(gmcMasterSesion!==uidSesion||firebaseAuthGMC.currentUser?.uid!==uidSesion)return;
+  db.stockUsuarios=snap.docs.map(d=>({...d.data(),id:d.id}));
+  gmcAsignacionesListas=!snap.metadata.fromCache;
+  gmcEstadoInventario(snap.metadata.fromCache?'Asignaciones en caché; esperando confirmación del servidor. No realice movimientos.':
+   snap.metadata.hasPendingWrites?'Cambios pendientes de confirmación bancaria de datos.':'Inventario y asignaciones conectados a Cloud Firestore · '+db.stockUsuarios.length+' registro(s) visibles. Ventas y cierres siguen locales.');
+  try{localStorage.setItem(KEY,JSON.stringify(db))}catch{}
+  renderAll();
+ },err=>{
+  if(gmcMasterSesion!==uidSesion)return;
+  gmcAsignacionesListas=false;db.stockUsuarios=[];
+  gmcEstadoInventario('Error al consultar asignaciones: '+mensajeFirebaseGMC(err));
+  console.warn('Firestore asignaciones',err);renderAll();
+ });
+}
+function gmcExigirInventarioCentral(){
+ if(!firebaseAuthGMC.currentUser||!adminAutenticado||firebaseRolGMC!=='admin')throw Error('Solo el administrador de Firebase puede registrar movimientos centrales de inventario en esta etapa.');
+ if(!navigator.onLine||!gmcMasterListos.productos||!gmcAsignacionesListas)throw Error('Se necesita conexión al servidor y datos actualizados de Firestore. No se modificó ninguna existencia.');
+ if(gmcMovimientoEnCurso)throw Error('Ya se está procesando un movimiento. Espere su confirmación.');
+}
+const gmcRedondear6=n=>Math.round((Number(n)+Number.EPSILON)*1000000)/1000000;
+const gmcCantidadValida=n=>Number.isFinite(n)&&n>0;
+window.guardarAjuste=async()=>{
+ try{
+  gmcExigirInventarioCentral();
+  const pid=document.getElementById('aProd')?.value;
+  const tipo=document.getElementById('aTipo')?.value;
+  const cantidad=Number(document.getElementById('aCant')?.value);
+  if(!pid||!gmcCantidadValida(cantidad)||!['sumar','restar','fijar'].includes(tipo))throw Error('Seleccione producto, tipo de ajuste y cantidad positiva.');
+  gmcMovimientoEnCurso=true;
+  const productoRef=doc(firestoreGMC,'productos',pid),movRef=doc(firestoreGMC,'movimientosInventario',uid());
+  await runTransaction(firestoreGMC,async tx=>{
+   const snap=await tx.get(productoRef);if(!snap.exists())throw Error('Producto no encontrado en Firestore.');
+   const antes=Number(snap.data().stock||0);
+   const despues=gmcRedondear6(tipo==='sumar'?antes+cantidad:tipo==='restar'?antes-cantidad:cantidad);
+   if(!Number.isFinite(despues)||despues<0)throw Error('Existencias insuficientes. El ajuste no fue aplicado.');
+   tx.update(productoRef,{stock:despues});
+   tx.set(movRef,{id:movRef.id,tipo:'ajuste_'+tipo,productoId:pid,antes,despues,cantidad,fecha:new Date().toISOString(),usuarioId:firebaseAuthGMC.currentUser.uid});
+  });
+  audit('AJUSTE INVENTARIO','Ajuste central '+tipo+' '+cantidad+' unidades '+pid);save();cerrarModal();
+ }catch(err){alert(err.message||mensajeFirebaseGMC(err));}
+ finally{gmcMovimientoEnCurso=false;}
+};
+window.guardarAsignacionLote=async()=>{
+ try{
+  gmcExigirInventarioCentral();
+  if(!tempAsignacionLineas.length)throw Error('Agregue al menos una línea de productos.');
+  const vendedor=cargarUsuarios().find(u=>u.id===tempAsignacionUsuarioId&&u.activo);
+  if(!vendedor)throw Error('Seleccione un vendedor activo.');
+  if(cierreHechoHoyUsuario(vendedor.id))throw Error('El usuario ya cerró su caja hoy.');
+  const cantidades=new Map();
+  for(const l of tempAsignacionLineas){
+   if(!gmcCantidadValida(l.cantidad))throw Error('Cantidad inválida en la asignación.');
+   cantidades.set(l.productoId,gmcRedondear6((cantidades.get(l.productoId)||0)+Number(l.cantidad)));
+  }
+  const loteId=uid(),fecha=fechaSistemaCierre();
+  const referencias=[...cantidades].map(([id,cantidad])=>({id,cantidad,ref:doc(firestoreGMC,'productos',id)}));
+  const lineas=tempAsignacionLineas.map(l=>({...l,id:uid()}));
+  gmcMovimientoEnCurso=true;
+  await runTransaction(firestoreGMC,async tx=>{
+   const snaps=[];for(const p of referencias)snaps.push(await tx.get(p.ref));
+   const ahora=new Date().toISOString();
+   for(let i=0;i<referencias.length;i++){
+    const p=referencias[i],snap=snaps[i];
+    if(!snap.exists())throw Error('El producto '+p.id+' ya no existe.');
+    if(Number(snap.data().stock||0)+0.000001<p.cantidad)throw Error('Stock insuficiente para '+snap.data().nombre+'. No se realizó ninguna asignación.');
+   }
+   for(let i=0;i<referencias.length;i++){
+    const p=referencias[i],stock=Number(snaps[i].data().stock||0);
+    tx.update(p.ref,{stock:gmcRedondear6(stock-p.cantidad),unidadesAsignadas:gmcRedondear6(Number(snaps[i].data().unidadesAsignadas||0)+p.cantidad)});
+   }
+   for(const l of lineas){
+    const nombre=snaps[referencias.findIndex(p=>p.id===l.productoId)].data().nombre;
+    const reg={id:l.id,loteId,usuarioId:vendedor.id,usuario:vendedor.usuario,productoId:l.productoId,nombre,fecha,cantidad:Number(l.cantidad),restante:Number(l.cantidad),estado:'abierta'};
+    tx.set(doc(firestoreGMC,'stockUsuarios',l.id),reg);
+   }
+   tx.set(doc(firestoreGMC,'movimientosInventario',loteId),{id:loteId,tipo:'asignacion',usuarioId:vendedor.id,fecha:ahora,detalle:lineas.map(l=>({productoId:l.productoId,cantidad:Number(l.cantidad)})),autorizadoPor:firebaseAuthGMC.currentUser.uid});
+  });
+  audit('ASIGNAR STOCK',vendedor.usuario+' · '+lineas.length+' líneas · lote '+loteId);
+  tempAsignacionLineas=[];tempAsignacionUsuarioId='';
+  document.getElementById('asigCantidad').value='';
+  save();cerrarModal();
+ }catch(err){alert(err.message||mensajeFirebaseGMC(err));}
+ finally{gmcMovimientoEnCurso=false;}
+};
+window.guardarEdicionAsignacionUsuario=async(id)=>{
+ try{
+  gmcExigirInventarioCentral();
+  const antigua=db.stockUsuarios.find(a=>a.id===id);
+  if(!antigua||antigua.estado!=='abierta')throw Error('La asignación no está disponible.');
+  if(!await comprobarClaveAsignaciones(document.getElementById('edAsigClave')?.value||''))throw Error('Contraseña del administrador incorrecta.');
+  const vinculada=asignacionVinculadaVenta(id)||Number(antigua.cantidad||0)-Number(antigua.restante||0)-Number(antigua.devuelto||0)>0.000001;
+  if(vinculada)throw Error('Esta asignación tiene movimientos de venta locales. Espere a centralizar las ventas antes de corregirla.');
+  const vendedor=cargarUsuarios().find(u=>u.id===document.getElementById('edAsigUsuario')?.value);
+  const nuevoProductoId=document.getElementById('edAsigProducto')?.value;
+  const cantidad=Number(document.getElementById('edAsigCantidad')?.value);
+  if(!vendedor||!gmcCantidadValida(cantidad))throw Error('Ingrese un vendedor y cantidad válidos.');
+  const aRef=doc(firestoreGMC,'stockUsuarios',id),anteriorRef=doc(firestoreGMC,'productos',antigua.productoId),nuevoRef=doc(firestoreGMC,'productos',nuevoProductoId);
+  const movimiento=doc(firestoreGMC,'movimientosInventario',uid());
+  gmcMovimientoEnCurso=true;
+  await runTransaction(firestoreGMC,async tx=>{
+   const snapAsignacion=await tx.get(aRef),snapAnterior=await tx.get(anteriorRef);
+   const snapNuevo=nuevoProductoId===antigua.productoId?snapAnterior:await tx.get(nuevoRef);
+   if(!snapAsignacion.exists()||!snapAnterior.exists()||!snapNuevo.exists())throw Error('Una ficha ya no existe.');
+   const actual=snapAsignacion.data();
+   if(actual.estado!=='abierta'||actual.usuarioId!==antigua.usuarioId||actual.productoId!==antigua.productoId||Number(actual.restante)!==Number(actual.cantidad)||Number(actual.devuelto||0)!==0)throw Error('La asignación cambió o contiene consumos. No se modificó.');
+   const devuelto=Number(actual.restante||0);
+   const cambiado=nuevoProductoId!==actual.productoId;
+   const stockAnterior=Number(snapAnterior.data().stock||0),stockNuevo=Number(snapNuevo.data().stock||0);
+   const finalNuevo=stockNuevo+(cambiado?0:devuelto)-cantidad;
+   if(finalNuevo< -0.000001)throw Error('Stock insuficiente para corregir esta asignación.');
+   if(cambiado){
+    tx.update(anteriorRef,{stock:gmcRedondear6(stockAnterior+devuelto),unidadesAsignadas:gmcRedondear6(Number(snapAnterior.data().unidadesAsignadas||0)-devuelto)});
+    tx.update(nuevoRef,{stock:gmcRedondear6(stockNuevo-cantidad),unidadesAsignadas:gmcRedondear6(Number(snapNuevo.data().unidadesAsignadas||0)+cantidad)});
+   }else tx.update(anteriorRef,{stock:gmcRedondear6(stockAnterior+devuelto-cantidad),unidadesAsignadas:gmcRedondear6(Number(snapAnterior.data().unidadesAsignadas||0)+cantidad-devuelto)});
+   tx.update(aRef,{usuarioId:vendedor.id,usuario:vendedor.usuario,productoId:nuevoProductoId,nombre:snapNuevo.data().nombre,cantidad,restante:cantidad});
+   tx.set(movimiento,{id:movimiento.id,tipo:'correccion_asignacion',asignacionId:id,fecha:new Date().toISOString(),usuarioId:firebaseAuthGMC.currentUser.uid});
+  });
+  audit('CORREGIR ASIGNACION STOCK',id);save();cerrarModal();
+ }catch(err){alert(err.message||mensajeFirebaseGMC(err));}
+ finally{gmcMovimientoEnCurso=false;}
+};
+window.confirmarBorrarAsignacionUsuario=async(id)=>{
+ try{
+  gmcExigirInventarioCentral();
+  const a=db.stockUsuarios.find(x=>x.id===id);
+  if(!a||a.estado!=='abierta'||asignacionVinculadaVenta(id))throw Error('La asignación no puede eliminarse.');
+  if(!await comprobarClaveAsignaciones(document.getElementById('borrarAsigClave')?.value||''))throw Error('Contraseña del administrador incorrecta.');
+  if(!confirm('¿Eliminar definitivamente la asignación y devolver su stock al inventario central?'))return;
+  const aRef=doc(firestoreGMC,'stockUsuarios',id),pRef=doc(firestoreGMC,'productos',a.productoId),mRef=doc(firestoreGMC,'movimientosInventario',uid());
+  gmcMovimientoEnCurso=true;
+  await runTransaction(firestoreGMC,async tx=>{
+   const as=await tx.get(aRef),ps=await tx.get(pRef);
+   if(!as.exists()||!ps.exists())throw Error('La asignación o el producto ya no existe.');
+   const anterior=as.data();
+   if(anterior.estado!=='abierta'||Number(anterior.restante)!==Number(anterior.cantidad)||Number(anterior.devuelto||0)!==0)throw Error('Asignación con consumos o cambios recientes. No se eliminó.');
+   tx.update(pRef,{stock:gmcRedondear6(Number(ps.data().stock||0)+Number(anterior.restante)),unidadesAsignadas:gmcRedondear6(Number(ps.data().unidadesAsignadas||0)-Number(anterior.restante))});
+   tx.delete(aRef);
+   tx.set(mRef,{id:mRef.id,tipo:'eliminar_asignacion',asignacionId:id,fecha:new Date().toISOString(),usuarioId:firebaseAuthGMC.currentUser.uid});
+  });
+  audit('BORRAR ASIGNACION STOCK',id);save();cerrarModal();
+ }catch(err){alert(err.message||mensajeFirebaseGMC(err));}
+ finally{gmcMovimientoEnCurso=false;}
+};
+
+// ETAPA 4: ajustes de stock y asignaciones se sincronizan en Firestore.
+// Ventas, compras, abonos, consumos por ventas y cierres siguen locales.
 bloquearFirebaseGMC();
 
 </script>
