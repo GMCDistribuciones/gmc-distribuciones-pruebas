@@ -358,8 +358,9 @@
           <div class="card kpi"><small>Saldo pendiente</small><strong id="cpSaldo">$0.00</strong></div>
           <div class="card kpi"><small>Saldo vencido</small><strong id="cpVencido">$0.00</strong></div>
         </div>
+        <div class="note" id="gmcAbonoPendienteAdmin" style="display:none;margin:10px 0" aria-live="polite"></div>
         <p id="cpResumen" class="muted" style="font-size:12px" aria-live="polite"></p>
-        <div class="table-wrap"><table><thead><tr><th>Factura</th><th>Fecha</th><th>Cliente</th><th>Identificación</th><th>Vendedor responsable</th><th>Día de atención</th><th>Ruta</th><th>Vencimiento</th><th>Total</th><th>Abonado</th><th>Saldo pendiente</th><th>Estado</th></tr></thead><tbody id="cpTabla"></tbody></table></div>
+        <div class="table-wrap"><table><thead><tr><th>Factura</th><th>Fecha</th><th>Cliente</th><th>Identificación</th><th>Vendedor responsable</th><th>Día de atención</th><th>Ruta</th><th>Vencimiento</th><th>Total</th><th>Abonado</th><th>Saldo pendiente</th><th>Estado</th><th>Acción</th></tr></thead><tbody id="cpTabla"></tbody></table></div>
       </div>
     </section>
 
@@ -762,6 +763,7 @@
         <div class="toolbar">
           <div style="flex:1;max-width:420px"><label>Buscar cliente o número de venta</label><input id="misCreditosBuscar" type="search" placeholder="Cliente o número de venta" oninput="renderMisCreditos()"></div>
         </div>
+        <div class="note" id="gmcAbonoPendienteMisCreditos" style="display:none;margin:10px 0" aria-live="polite"></div>
         <p id="misCreditosResumen" class="muted" style="font-size:13px"></p>
         <div class="table-wrap"><table><thead><tr><th>Fecha</th><th>Venta</th><th>Cliente</th><th>Total</th><th>Abonado</th><th>Saldo pendiente</th><th>Vencimiento</th><th>Acciones</th></tr></thead><tbody id="tbMisCreditos"></tbody></table></div>
       </div>
@@ -1553,8 +1555,8 @@ function renderCarteraPendiente(prefijo){
   document.getElementById(prefijo+'Resumen').textContent=lista.length+' factura(s) pendientes · '+clientes.size+' cliente(s) · saldo actual '+money(saldo)+(desde.value||hasta.value?' · fechas de emisión filtradas':'');
   tabla.innerHTML=lista.map(r=>{
     const v=r.venta,c=r.cliente;
-    return `<tr><td>${esc(v.numero||'S/N')}</td><td>${esc(v.fecha||'—')}</td><td>${esc(c?.razonSocial||c?.nombreCliente||c?.nombre||v.tercero||'—')}</td><td>${esc(c?.identificacion||'—')}</td><td>${esc(r.vendedor)}</td><td>${esc(r.dia||'Sin asignar')}</td><td>${esc(r.ruta||'—')}</td><td>${esc(fechaVencimientoCredito(v.fecha)||'—')}</td><td>${money(v.total)}</td><td>${money(resumenAbonosVentaCredito(v).total)}</td><td><strong class="danger">${money(r.saldo)}</strong></td><td>${creditoVencido(v)?'<span class="danger">Vencida</span>':'Pendiente'}</td></tr>`;
-  }).join('')||'<tr><td colspan="12" class="empty">Sin facturas pendientes para los filtros seleccionados.</td></tr>';
+    return `<tr><td>${esc(v.numero||'S/N')}</td><td>${esc(v.fecha||'—')}</td><td>${esc(c?.razonSocial||c?.nombreCliente||c?.nombre||v.tercero||'—')}</td><td>${esc(c?.identificacion||'—')}</td><td>${esc(r.vendedor)}</td><td>${esc(r.dia||'Sin asignar')}</td><td>${esc(r.ruta||'—')}</td><td>${esc(fechaVencimientoCredito(v.fecha)||'—')}</td><td>${money(v.total)}</td><td>${money(resumenAbonosVentaCredito(v).total)}</td><td><strong class="danger">${money(r.saldo)}</strong></td><td>${creditoVencido(v)?'<span class="danger">Vencida</span>':'Pendiente'}</td><td><button class="btn btn-success" onclick="abrirAbonoCredito('${esc(v.id)}')">Abonar</button></td></tr>`;
+  }).join('')||'<tr><td colspan="13" class="empty">Sin facturas pendientes para los filtros seleccionados.</td></tr>';
 }
 
 // Analítica de cartera pendiente: mismos filtros generales de Análisis, sin modificar los créditos.
@@ -2521,7 +2523,7 @@ function renderMisCreditos(){
   cuerpo.innerHTML=visibles.slice().sort((a,b)=>String(b.fecha||'').localeCompare(String(a.fecha||''))).map(v=>`<tr><td>${esc(v.fecha)}</td><td>${esc(v.numero||'S/N')}</td><td>${esc(v.tercero)}</td><td>${money(v.total)}</td><td>${money(v.abono||0)}</td><td><strong>${money(saldoCredito(v))}</strong></td><td>${esc(fechaVencimientoCredito(v.fecha))}${creditoVencido(v)?'<br><strong class="danger">VENCIDA</strong>':''}</td><td><div class="actions" style="flex-wrap:nowrap"><button class="btn btn-light" onclick="verDoc('ventas','${esc(v.id)}')">Ver</button><button class="btn btn-success" onclick="abrirAbonoCredito('${esc(v.id)}')">Abonar</button></div></td></tr>`).join('')||'<tr><td colspan="8" class="empty">No hay créditos pendientes con ese criterio.</td></tr>';
 }
 function abrirAbonoCredito(id){
- if(db.ventas.some(v=>v.id===id&&v.etapaFirebase==='etapa5'))return alert('Operación pendiente de centralización: las ventas confirmadas en Firestore no se pueden modificar, borrar ni abonar localmente. Se habilitará con su correspondiente transacción en la próxima etapa.');
+ if(db.ventas.some(v=>v.id===id&&v.etapaFirebase==='etapa5')&&!window.gmcRegistrarAbonoCreditoFirebase)return alert('Abonos centrales aún no disponibles. Espere la conexión con Firebase.');
   const v=db.ventas.find(x=>x.id===id);
   if(!adminAutenticado&&!creditoPerteneceUsuario(v))return alert('Solo puede registrar abonos de sus propias ventas a crédito.');
   if(!v||v.formaPago!=='credito'||saldoCredito(v)<=0||esDevuelta(id))return alert('Esta venta no tiene un saldo pendiente para abonar');
@@ -2538,7 +2540,10 @@ function actualizarMetodoAbonoCredito(){
  }
 }
 function registrarAbonoCredito(id){
- if(db.ventas.some(v=>v.id===id&&v.etapaFirebase==='etapa5'))return alert('Operación pendiente de centralización: las ventas confirmadas en Firestore no se pueden modificar, borrar ni abonar localmente. Se habilitará con su correspondiente transacción en la próxima etapa.');
+ if(db.ventas.some(v=>v.id===id&&v.etapaFirebase==='etapa5')){
+  if(!window.gmcRegistrarAbonoCreditoFirebase)return alert('Abonos centrales no disponibles; no se registró nada.');
+  return window.gmcRegistrarAbonoCreditoFirebase(id);
+ }
   const v=db.ventas.find(x=>x.id===id);
   if(!adminAutenticado&&!creditoPerteneceUsuario(v))return alert('Solo puede registrar abonos de sus propias ventas a crédito.');
   if(!v||v.formaPago!=='credito'||esDevuelta(id)||saldoCredito(v)<=0)return;
@@ -3749,7 +3754,7 @@ function modalEntradaFirebaseGMC(tipo='usuario'){
   const admin=tipo==='admin';
   const primeraConfiguracion=!localStorage.getItem(ADMIN_AUTH_KEY);
   openModal(admin?'Acceso del administrador · Firebase':'Ingreso de usuario · Firebase',`
-    <p class="note">Autenticación centralizada mediante Firebase. Sus ventas y demás datos continúan en el almacenamiento local aislado de estas pruebas.</p>
+    <p class="note">Autenticación con Firebase. Productos, clientes, inventario, ventas, abonos y cartera están conectados a Firestore en estas pruebas. Compras, cierres y Caja Bancos aún no están centralizados.</p>
     <div class="row"><div class="c6"><label>Correo electrónico</label><input id="fbLoginEmail" type="email" autocomplete="username"></div><div class="c6"><label>Contraseña</label><input id="fbLoginPass" type="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')gmcIngresarFirebase('${admin?'admin':'usuario'}')"></div></div>
     <div class="actions" style="margin-top:12px"><button class="btn btn-primary" onclick="gmcIngresarFirebase('${admin?'admin':'usuario'}')">Ingresar</button>${admin?'<button class="btn btn-light" onclick="abrirLoginUsuario()">Ingresar como usuario</button>':'<button class="btn btn-light" onclick="abrirAccesoAdmin()">Ingresar como administrador</button>'}${primeraConfiguracion?'<button class="btn btn-light" onclick="gmcMostrarRegistroFirebase()">Primera configuración</button>':''}</div>`);
   document.getElementById('fbLoginEmail')?.focus();
@@ -3942,7 +3947,7 @@ let gmcMasterListos={productos:false,clientes:false};
 let gmcAsignacionesListas=false;
 let gmcAsignacionesUnsub=null;
 let gmcMovimientoEnCurso=false;
-// ETAPA 5: cada UID tiene su borrador de venta pendiente; nunca genera dos IDs para un reintento.
+// ETAPA 5-6: cada UID conserva las ventas pendientes; abonos separados con ID idempotente.
 let gmcVentasUnsub=null;
 let gmcVentasListas=false;
 let gmcVentaEnCurso=false;
@@ -4116,7 +4121,7 @@ function gmcSuscribirAsignacionesFirebase(uidSesion){
   db.stockUsuarios=snap.docs.map(d=>({...d.data(),id:d.id}));
   gmcAsignacionesListas=!snap.metadata.fromCache;
   gmcEstadoInventario(snap.metadata.fromCache?'Asignaciones en caché; esperando confirmación del servidor. No realice movimientos.':
-   snap.metadata.hasPendingWrites?'Cambios pendientes de confirmación bancaria de datos.':'Inventario y asignaciones conectados a Cloud Firestore · '+db.stockUsuarios.length+' registro(s) visibles. Ventas y cierres siguen locales.');
+   snap.metadata.hasPendingWrites?'Cambios pendientes de confirmación bancaria de datos.':'Inventario y asignaciones conectados a Cloud Firestore · '+db.stockUsuarios.length+' registro(s) visibles. Cierres y Caja Bancos siguen locales.');
   try{localStorage.setItem(KEY,JSON.stringify(db))}catch{}
   renderAll();
  },err=>{
@@ -4271,11 +4276,11 @@ function gmcSuscribirVentasFirebase(uidSesion){
   if(firebaseAuthGMC.currentUser?.uid!==uidSesion||gmcMasterSesion!==uidSesion)return;
   db.ventas=snap.docs.map(d=>({...d.data(),id:d.id}));
   gmcVentasListas=!snap.metadata.fromCache&&!snap.metadata.hasPendingWrites;
-  gmcEstadoVentas(snap.metadata.fromCache?'Ventas en caché; esperando confirmación del servidor.':snap.metadata.hasPendingWrites?'Hay escrituras de ventas pendientes de confirmar en Firestore.':'Ventas conectadas a Firestore · '+db.ventas.length+' registro(s). Abonos, devoluciones y cierres aún son locales.');
+  gmcEstadoVentas(snap.metadata.fromCache?'Ventas en caché; esperando confirmación del servidor.':snap.metadata.hasPendingWrites?'Hay escrituras de ventas pendientes de confirmar en Firestore.':'Ventas, abonos y cartera conectados a Firestore · '+db.ventas.length+' registro(s). Cierres y Caja Bancos aún no son centrales.');
   try{localStorage.setItem(KEY,JSON.stringify(db));}catch(e){console.warn('Respaldo de prueba',e);}
-  gmcMostrarVentaPendiente();renderAll();
+  gmcMostrarVentaPendiente();gmcMostrarAbonoPendiente();renderAll();
  },err=>{if(gmcMasterSesion!==uidSesion)return;db.ventas=[];gmcVentasListas=false;gmcEstadoVentas('Error al consultar ventas: '+mensajeFirebaseGMC(err));console.warn('Ventas Firestore',err);renderAll();});
- gmcMostrarVentaPendiente();
+ gmcMostrarVentaPendiente();gmcMostrarAbonoPendiente();
 }
 function gmcExigirVentaCentral(){
  if(!firebaseAuthGMC.currentUser||document.body.classList.contains('sesion-bloqueada'))throw Error('Primero inicie sesión con Firebase.');
@@ -4433,8 +4438,132 @@ window.gmcGuardarDocumentoVentaFirebase=async()=>{
   await gmcCrearVentaPendiente(d,'documento');
  }catch(err){alert(err.message||mensajeFirebaseGMC(err));}
 };
-// ETAPA 5: ajustes de stock y asignaciones se sincronizan en Firestore.
-// Ventas y su consumo de stock en Firestore. Compras, abonos, devoluciones y cierres siguen locales.
+// ETAPA 6: abonos posteriores a crédito y cartera centralizados en el documento
+// de la venta; nunca se reescribe el historial ni se altera el inventario.
+let gmcAbonoEnCurso=false;
+const gmcClavePendienteAbono=()=> 'gmc_abono_pendiente_etapa6_'+(firebaseAuthGMC.currentUser?.uid||'sin_sesion');
+function gmcPendienteAbono(){
+ try{return JSON.parse(localStorage.getItem(gmcClavePendienteAbono())||'null');}
+ catch{return null;}
+}
+function gmcMostrarAbonoPendiente(){
+ const pendiente=gmcPendienteAbono();
+ const aviso=pendiente
+  ? 'Abono pendiente de comprobación (factura '+esc(pendiente.numero||pendiente.ventaId)+'). No registre un abono nuevo hasta confirmar el anterior.'
+  : '';
+ for(const id of ['gmcAbonoPendienteMisCreditos','gmcAbonoPendienteAdmin']){
+  const n=document.getElementById(id);if(!n)continue;
+  n.style.display=pendiente?'':'none';
+  n.innerHTML=pendiente?'<strong>⚠️ '+aviso+'</strong><div class="actions" style="margin-top:9px"><button class="btn btn-warning" onclick="gmcReintentarAbonoCreditoFirebase()">Revisar y reintentar el mismo abono</button><button class="btn btn-light" onclick="gmcDescartarAbonoCreditoFirebase()">Descartar solo si no existe en Firestore</button></div>':'';
+ }
+}
+function gmcExigirAbonoCentral(){
+ if(!firebaseAuthGMC.currentUser||document.body.classList.contains('sesion-bloqueada'))throw Error('Inicie sesión con Firebase.');
+ if(!navigator.onLine||!gmcVentasListas)throw Error('Se necesita conexión confirmada a Firestore para registrar un abono. No se modificó la factura.');
+ if(gmcAbonoEnCurso)throw Error('Ya se está procesando un abono. Espere.');
+ if(gmcPendienteAbono())throw Error('Existe un abono pendiente. Use «Revisar y reintentar el mismo abono» para evitar duplicados.');
+}
+const gmcCentavosAbono=n=>Math.round(Number(n)*100);
+function gmcLeerNuevoAbono(venta){
+ const cantidad=Number(document.getElementById('cobroNuevoAbono')?.value);
+ const centavos=gmcCentavosAbono(cantidad);
+ if(!Number.isFinite(cantidad)||centavos<=0||Math.abs(centavos/100-cantidad)>0.000001||centavos>gmcCentavosAbono(venta.saldo))
+  throw Error('Ingrese un importe positivo de máximo dos decimales y no superior al saldo pendiente.');
+ const fecha=fechaSistemaCierre();
+ if(document.getElementById('cobroFechaAbono')?.value!==fecha)throw Error('La fecha del abono debe ser la fecha actual del sistema. Vuelva a abrir el formulario.');
+ const formaPago=document.getElementById('cobroMetodoAbono')?.value;
+ if(!['efectivo','transferencia','mixto','cheque'].includes(formaPago))throw Error('Forma de cobro incorrecta.');
+ const abono={id:gmcIdVentaSeguro(),fecha,valor:centavos/100,formaPago,usuarioId:firebaseAuthGMC.currentUser.uid};
+ if(formaPago==='mixto'){
+  const efectivo=Number(document.getElementById('cobroAbonoEfectivo')?.value);
+  const transferencia=Number(document.getElementById('cobroAbonoTransferencia')?.value);
+  if(![efectivo,transferencia].every(n=>Number.isFinite(n)&&n>0&&Math.abs(gmcCentavosAbono(n)/100-n)<0.000001)
+     ||gmcCentavosAbono(efectivo)+gmcCentavosAbono(transferencia)!==centavos)
+   throw Error('Efectivo y transferencia deben ser positivos y sumar exactamente '+money(abono.valor)+'.');
+  abono.pagoEfectivo=gmcCentavosAbono(efectivo)/100;
+  abono.pagoTransferencia=gmcCentavosAbono(transferencia)/100;
+ }
+ if(formaPago==='cheque'){
+  abono.bancoCheque=document.getElementById('cobroAbonoChequeBanco')?.value.trim()||'';
+  abono.numeroCheque=document.getElementById('cobroAbonoChequeNumero')?.value.trim()||'';
+  abono.titularCheque=document.getElementById('cobroAbonoChequeTitular')?.value.trim()||'';
+  abono.fechaCobroCheque=document.getElementById('cobroAbonoChequeFecha')?.value||'';
+  if(!abono.bancoCheque||!abono.numeroCheque||!abono.titularCheque||!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(abono.fechaCobroCheque)||abono.fechaCobroCheque<fecha)
+   throw Error('Complete los datos del cheque y su fecha prevista de cobro igual o posterior al registro.');
+ }
+ return abono;
+}
+async function gmcProcesarAbonoPendiente(pendiente){
+ const usuario=firebaseAuthGMC.currentUser;
+ if(!usuario||pendiente.uid!==usuario.uid)throw Error('Este abono pertenece a otra cuenta Firebase.');
+ if(!navigator.onLine||!gmcVentasListas)throw Error('Se necesita conexión confirmada al servidor; el abono pendiente permanece guardado.');
+ if(gmcAbonoEnCurso)return;
+ gmcAbonoEnCurso=true;
+ try{
+  const referencia=doc(firestoreGMC,'ventas',pendiente.ventaId);
+  const resultado=await runTransaction(firestoreGMC,async tx=>{
+   const documento=await tx.get(referencia);
+   if(!documento.exists())throw Error('La factura ya no existe en Firestore.');
+   const v=documento.data();
+   if(v.etapaFirebase!=='etapa5'||v.formaPago!=='credito')throw Error('Este documento no corresponde a una venta a crédito centralizada.');
+   if(firebaseRolGMC!=='admin'&&v.usuarioVentaId!==usuario.uid)throw Error('Solo puede abonar las ventas de su usuario.');
+   const existentes=Array.isArray(v.abonosPosteriores)?v.abonosPosteriores:[];
+   const previo=existentes.find(a=>a?.id===pendiente.abono.id);
+   if(previo){
+    if(previo.usuarioId!==usuario.uid||gmcCentavosAbono(previo.valor)!==gmcCentavosAbono(pendiente.abono.valor))throw Error('El identificador del abono ya fue utilizado con datos diferentes.');
+    return {existente:true,numero:v.numero||pendiente.numero,saldo:Number(v.saldo||0)};
+   }
+   const saldoCent=gmcCentavosAbono(v.saldo),pagadoCent=gmcCentavosAbono(v.abono||0),monto=gmcCentavosAbono(pendiente.abono.valor);
+   if(!Number.isSafeInteger(saldoCent)||!Number.isSafeInteger(pagadoCent)||!Number.isSafeInteger(monto)||monto<=0||monto>saldoCent)
+    throw Error('El saldo fue modificado o resulta insuficiente. Revise la factura antes de abonar. No se registró un nuevo cobro.');
+   if(gmcCentavosAbono(v.total)!==saldoCent+pagadoCent)throw Error('La factura no está cuadrada: total, saldo y abonos no coinciden.');
+   if(existentes.length>=500)throw Error('La factura alcanzó el máximo de registros de abonos admitidos para esta etapa.');
+   const nuevoAbono=(pagadoCent+monto)/100,nuevoSaldo=(saldoCent-monto)/100;
+   tx.update(referencia,{abono:nuevoAbono,saldo:nuevoSaldo,abonosPosteriores:[...existentes,pendiente.abono]});
+   return {existente:false,numero:v.numero||pendiente.numero,saldo:nuevoSaldo};
+  });
+  localStorage.removeItem('gmc_abono_pendiente_etapa6_'+pendiente.uid);gmcMostrarAbonoPendiente();
+  cerrarModal();renderAll();
+  alert(resultado.existente?'Este abono ya estaba registrado en Firestore. Se reconoció sin duplicarlo. Saldo: '+money(resultado.saldo):'Abono confirmado en Firestore · Factura '+resultado.numero+'. Saldo pendiente: '+money(resultado.saldo));
+ }catch(error){
+  gmcMostrarAbonoPendiente();
+  alert('No se pudo confirmar el resultado del abono: '+(error.message||mensajeFirebaseGMC(error))+'. Conserve el mismo identificador y utilice «Revisar y reintentar el mismo abono». NO cobre otra vez hasta comprobarlo.');
+ }finally{gmcAbonoEnCurso=false;}
+}
+window.gmcRegistrarAbonoCreditoFirebase=async id=>{
+ try{
+  gmcExigirAbonoCentral();
+  const venta=db.ventas.find(x=>x.id===id);
+  if(!venta||venta.etapaFirebase!=='etapa5'||venta.formaPago!=='credito'||saldoCredito(venta)<=0||esDevuelta(id))throw Error('La factura no tiene un saldo de crédito disponible.');
+  if(firebaseRolGMC!=='admin'&&!creditoPerteneceUsuario(venta))throw Error('Solo puede abonar sus propias ventas a crédito.');
+  const abono=gmcLeerNuevoAbono(venta);
+  const pendiente={uid:firebaseAuthGMC.currentUser.uid,ventaId:id,numero:venta.numero,abono};
+  localStorage.setItem(gmcClavePendienteAbono(),JSON.stringify(pendiente));gmcMostrarAbonoPendiente();
+  await gmcProcesarAbonoPendiente(pendiente);
+ }catch(error){alert(error.message||mensajeFirebaseGMC(error));}
+};
+window.gmcReintentarAbonoCreditoFirebase=async()=>{
+ const p=gmcPendienteAbono();if(!p)return alert('No existe un abono pendiente.');
+ if(p.uid!==firebaseAuthGMC.currentUser?.uid)return alert('El abono pertenece a otra sesión.');
+ try{await gmcProcesarAbonoPendiente(p);}
+ catch(error){alert('No se pudo comprobar el abono. Se conserva la operación pendiente. '+(error.message||mensajeFirebaseGMC(error)));}
+};
+window.gmcDescartarAbonoCreditoFirebase=async()=>{
+ const p=gmcPendienteAbono();if(!p)return alert('No existe un abono pendiente.');
+ if(gmcAbonoEnCurso)return alert('Espere a que termine la comprobación actual.');
+ if(p.uid!==firebaseAuthGMC.currentUser?.uid)return alert('El abono pertenece a otra sesión.');
+ if(!navigator.onLine)return alert('Es necesario consultar Firestore en línea antes de descartar.');
+ try{
+  const v=await getDocFromServer(doc(firestoreGMC,'ventas',p.ventaId));
+  if(!v.exists())return alert('No se encontró la venta en Firestore. Revise los datos antes de descartar el abono.');
+  if((v.data().abonosPosteriores||[]).some(a=>a?.id===p.abono.id))return alert('Este abono YA está registrado en Firestore. No se puede descartar como no cobrado. Use «Revisar y reintentar» para limpiar la operación pendiente.');
+  if(!confirm('Firestore confirma que este identificador de abono no existe. ¿Descartar únicamente el intento pendiente?'))return;
+  localStorage.removeItem(gmcClavePendienteAbono());gmcMostrarAbonoPendiente();
+  alert('Intento descartado. No se ha modificado el saldo ni el historial en Firestore.');
+ }catch(error){alert('No fue posible comprobar con Firestore. Se conserva el intento pendiente. '+mensajeFirebaseGMC(error));}
+};
+// ETAPA 5: ventas y sus descuentos de stock; ETAPA 6: abonos y saldos centrales.
+// Compras, devoluciones, cierres y Caja Bancos continúan sin centralizar.
 // Esperar la restauración inicial de Authentication antes de mostrar el ingreso:
 // evita que una sesión previa de administrador salte el selector de usuario.
 firebaseAuthGMC.authStateReady().then(async()=>{
