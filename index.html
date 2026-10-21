@@ -2190,13 +2190,17 @@ let ventaClienteActivo=null; // null: todavía no se ha seleccionado cliente; ''
 let ventaClienteNombreActivo='';
 let ventaPvpActivo=1;
 let ventaCategoriaActual='Todas';
+// La fecha automática se mantiene al día en Ecuador, pero se respeta
+// la selección expresa de una fecha diferente por el operador.
+window.gmcFechaVentaManual=false;
+document.getElementById('rvFecha').addEventListener('change',()=>{window.gmcFechaVentaManual=true;});
 function nextVentaNumero(){return String((db.ventas.length+1)).padStart(6,'0')}
 
 // Sin tocar el almacenamiento ni la estructura de las ventas anteriores.
 function prepararVentaRapida(){
   const numero=document.getElementById('rvNumero');if(!numero)return;
   numero.value=window.gmcVentasCentralizadas?'Se asigna al guardar':nextVentaNumero();
-  const fecha=document.getElementById('rvFecha');if(!fecha.value)fecha.value=today();
+  const fecha=document.getElementById('rvFecha');if(!window.gmcFechaVentaManual||!fecha.value)fecha.value=today();
   const lista=db.clientes.map(c=>`<option value="${esc(c.id)}">${esc(c.identificacion||'')} - ${esc(c.nombre)}${c.ruta?' · Ruta '+esc(c.ruta):''}</option>`).join('');
   const opciones='<option value="">Consumidor final</option>'+lista;
   const clienteInicio=document.getElementById('ventaClienteInicio');
@@ -2296,6 +2300,7 @@ function nuevaVentaRapida(){
   ventaRapidaLineas=[];ventaRapidaSeleccion=-1;
   ventaClienteActivo=null;ventaClienteNombreActivo='';ventaPvpActivo=1;ventaCategoriaActual='Todas';
   document.getElementById('rvComentario').value='';
+  window.gmcFechaVentaManual=false;
   document.getElementById('rvFecha').value=today();
   document.getElementById('ventaPvpInicio').value='1';
   prepararVentaRapida();
@@ -4373,7 +4378,7 @@ async function gmcEjecutarVentaFirestore(pendiente){
   // La suscripción onSnapshot carga las ventas confirmadas. Nunca se modifica db.ventas ni el stock local al enviar.
   if(pendiente.origen==='rapida'){
    ventaRapidaLineas=[];ventaRapidaSeleccion=-1;ventaClienteActivo=null;ventaClienteNombreActivo='';ventaPvpActivo=1;ventaCategoriaActual='Todas';
-   document.getElementById('rvComentario').value='';document.getElementById('rvFecha').value=today();document.getElementById('ventaPvpInicio').value='1';
+   window.gmcFechaVentaManual=false;document.getElementById('rvComentario').value='';document.getElementById('rvFecha').value=today();document.getElementById('ventaPvpInicio').value='1';
   }else{tempLineas=[];}
   cerrarModal();renderAll();
   alert(resultado.existente?'Venta ya confirmada en Firestore. Se reconoció la operación anterior sin descontar stock otra vez. Documento '+resultado.numero:'Venta confirmada en Firestore. Documento '+resultado.numero+'. Stock descontado una sola vez.');
@@ -4431,7 +4436,11 @@ window.gmcGuardarVentaRapidaFirebase=async()=>{
   if(!Number.isFinite(valorAbono)||valorAbono<0||valorAbono>total)throw Error('Abono inicial inválido.');
   const abono=gmcMonto2(valorAbono),saldo=formaPago==='credito'?gmcMonto2(total-abono):0;
   const c=db.clientes.find(x=>x.id===ventaClienteActivo);
-  const d={id:gmcIdVentaSeguro(),fecha:document.getElementById('rvFecha').value,numero:'',terceroId:ventaClienteActivo,tercero:c?.nombre||ventaClienteNombreActivo||'Consumidor final',usuarioVenta:usuarioQueRealizoVenta(),comentario:document.getElementById('rvComentario')?.value.trim()||'',lineas:ventaRapidaLineas.map(x=>({...x})),base:ventaRapidaLineas.reduce((a,l)=>a+Number(l.base||0),0),total,costo:ventaRapidaLineas.reduce((a,l)=>a+Number(l.costo||0)*Number(l.cantidad||0),0),formaPago,abono,saldo,...(formaPago==='mixto'?{pagoEfectivo,pagoTransferencia}:{}),...datosCheque,abonoInicial:formaPago==='credito'?abono:0,abonosPosteriores:[]};
+  // Revalidar justo antes de enviar: el formulario podía conservar la fecha UTC
+  // antigua si el navegador lo había restaurado o la venta quedó abierta.
+  const fechaVenta=window.gmcFechaVentaManual?document.getElementById('rvFecha').value:today();
+  document.getElementById('rvFecha').value=fechaVenta;
+  const d={id:gmcIdVentaSeguro(),fecha:fechaVenta,numero:'',terceroId:ventaClienteActivo,tercero:c?.nombre||ventaClienteNombreActivo||'Consumidor final',usuarioVenta:usuarioQueRealizoVenta(),comentario:document.getElementById('rvComentario')?.value.trim()||'',lineas:ventaRapidaLineas.map(x=>({...x})),base:ventaRapidaLineas.reduce((a,l)=>a+Number(l.base||0),0),total,costo:ventaRapidaLineas.reduce((a,l)=>a+Number(l.costo||0)*Number(l.cantidad||0),0),formaPago,abono,saldo,...(formaPago==='mixto'?{pagoEfectivo,pagoTransferencia}:{}),...datosCheque,abonoInicial:formaPago==='credito'?abono:0,abonosPosteriores:[]};
   await gmcCrearVentaPendiente(d,'rapida');
  }catch(err){alert(err.message||mensajeFirebaseGMC(err));}
 };
