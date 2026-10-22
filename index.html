@@ -632,6 +632,8 @@
       <div class="card">
         <div class="actions" style="justify-content:space-between;align-items:center"><h3>🏦 Caja Bancos · Cuentas bancarias</h3><button class="btn btn-primary" onclick="modalCuentaBancaria()">+ Crear cuenta</button></div>
         <p class="note">Cada cuenta dispone de su saldo inicial y sus movimientos independientes. Saldo actual = saldo inicial + depósitos registrados − gastos administrativos vinculados. Las transferencias de ventas se ingresan una sola vez en la cuenta que elija; no se acreditan sin seleccionar el banco. Los gastos operativos de vendedores y los cierres diarios no se modifican.</p>
+        <div class="note" id="gmcEstadoCajaBancos" style="margin-top:12px">Caja Bancos: esperando autenticación y Firestore.</div>
+        <div class="actions" style="margin-top:9px;flex-wrap:wrap"><button class="btn btn-light" onclick="gmcVerificarOperacionBanco()">Comprobar operación pendiente</button><button class="btn btn-light" id="gmcBtnMigrarBancos" style="display:none" onclick="gmcMigrarCajaBancos()">Migrar mis registros bancarios locales (una sola vez)</button></div>
         <div id="bancosCuentas" class="grid g3" style="margin-top:12px"></div>
       </div>
       <div class="card" style="margin-top:14px">
@@ -3713,7 +3715,7 @@ openModal('Preparando acceso Firebase','<p class="note">Conectando Firebase Auth
 // La facturación, inventario, abonos y cajas continúan aislados en localStorage de PRUEBAS.
 import {initializeApp, getApps, getApp} from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-app.js';
 import {getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, EmailAuthProvider, reauthenticateWithCredential, updatePassword, sendPasswordResetEmail} from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-auth.js';
-import {getFirestore, doc, getDoc, getDocFromServer, collection, query, where, onSnapshot, setDoc, updateDoc, deleteDoc, runTransaction, serverTimestamp} from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-firestore.js';
+import {getFirestore, doc, getDoc, getDocFromServer, collection, query, where, onSnapshot, setDoc, updateDoc, deleteDoc, runTransaction, serverTimestamp, writeBatch} from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-firestore.js';
 const configFirebaseGMC = {
   apiKey:'AIzaSyBtj-y2p3qAYWknIX6J5aK6DAzkD9bOc1s',
   authDomain:'gmcdistribucionesdb.firebaseapp.com',
@@ -3762,7 +3764,7 @@ function modalEntradaFirebaseGMC(tipo='usuario'){
   const admin=tipo==='admin';
   const primeraConfiguracion=!localStorage.getItem(ADMIN_AUTH_KEY);
   openModal(admin?'Acceso del administrador · Firebase':'Ingreso de usuario · Firebase',`
-    <p class="note">Autenticación con Firebase. Productos, clientes, inventario, ventas, abonos y cartera están conectados a Firestore en estas pruebas. Compras, cierres y Caja Bancos aún no están centralizados.</p>
+    <p class="note">Autenticación con Firebase. Productos, clientes, inventario, ventas, abonos y cartera están conectados a Firestore en estas pruebas. Caja Bancos se centraliza en la Etapa 9. Compras y otros módulos no incluidos permanecen locales.</p>
     <div class="row"><div class="c6"><label>Correo electrónico</label><input id="fbLoginEmail" type="email" autocomplete="username"></div><div class="c6"><label>Contraseña</label><input id="fbLoginPass" type="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')gmcIngresarFirebase('${admin?'admin':'usuario'}')"></div></div>
     <div class="actions" style="margin-top:12px"><button class="btn btn-primary" onclick="gmcIngresarFirebase('${admin?'admin':'usuario'}')">Ingresar</button>${admin?'<button class="btn btn-light" onclick="abrirLoginUsuario()">Ingresar como usuario</button>':'<button class="btn btn-light" onclick="abrirAccesoAdmin()">Ingresar como administrador</button>'}${primeraConfiguracion?'<button class="btn btn-light" onclick="gmcMostrarRegistroFirebase()">Primera configuración</button>':''}</div>`);
   document.getElementById('fbLoginEmail')?.focus();
@@ -3967,6 +3969,7 @@ const gmcMaestroEstado=(tipo,texto)=>{
  if(nodo)nodo.textContent=texto;
 };
 function gmcDetenerMaestrosFirebase(){
+ gmcDetenerCajaBancosFirebase();
  gmcDetenerGastosFirebase();
  gmcDetenerCierresFirebase();
  if(gmcVentasUnsub){try{gmcVentasUnsub()}catch{}gmcVentasUnsub=null;}
@@ -3987,6 +3990,7 @@ function gmcDetenerMaestrosFirebase(){
 function gmcSuscribirMaestrosFirebase(uidSesion){
  gmcDetenerMaestrosFirebase();
  gmcMasterSesion=uidSesion;
+ gmcSuscribirCajaBancosFirebase(uidSesion);
  gmcSuscribirAsignacionesFirebase(uidSesion);
  gmcSuscribirVentasFirebase(uidSesion);
  gmcSuscribirCierresFirebase(uidSesion);
@@ -5025,6 +5029,259 @@ firebaseAuthGMC.authStateReady().then(async()=>{
   console.warn('No se pudo comprobar la sesión inicial de Firebase:',error);
   bloquearFirebaseGMC();
 });
+
+
+// GMC DISTRIBUCIONES — ETAPA 9. Solo Caja Bancos y sus registros vinculados.
+// Firestore es la fuente de verdad; nunca se publica localStorage como si fuera remoto.
+const gmcBancoColecciones=['cuentasBancarias','movimientosBancarios','gastosAdministrativos','historialCambiosGastos','gestionChequesBanco'];
+// Capturar el historial local al cargar la página, ANTES de que el login
+// limpie las copias locales para conectarse a Firestore.
+const gmcBancoLegacyInicial={cuentasBancarias:structuredClone(db.cuentasBancarias||[]),movimientosBancarios:structuredClone(db.movimientosBancarios||[]),gastos:structuredClone(db.gastos||[]),historialCambiosGastos:structuredClone(db.historialCambiosGastos||[]),gestionCheques:structuredClone(db.gestionCheques||{})};
+// Persistir copia preventiva incluso si primero ingresa un vendedor.
+const gmcBancoRespaldoPrevioClave='gmc_etapa9_historico_local_previo';
+try{if(!localStorage.getItem(gmcBancoRespaldoPrevioClave)&&[gmcBancoLegacyInicial.cuentasBancarias,gmcBancoLegacyInicial.movimientosBancarios,gmcBancoLegacyInicial.gastos,gmcBancoLegacyInicial.historialCambiosGastos].some(a=>a.length)||!localStorage.getItem(gmcBancoRespaldoPrevioClave)&&Object.keys(gmcBancoLegacyInicial.gestionCheques).length){localStorage.setItem(gmcBancoRespaldoPrevioClave,JSON.stringify(gmcBancoLegacyInicial));}}catch(e){console.warn('No se pudo respaldar Caja Bancos local',e)}
+let gmcBancoUnsubs=[],gmcBancoListos={},gmcBancoDatos={},gmcBancoSesion='',gmcBancoOcupado=false;
+const gmcBancoPendienteClave=()=> 'gmc_etapa9_operacion_pendiente_'+(firebaseAuthGMC.currentUser?.uid||'sin_sesion');
+const gmcBancoRespaldoClave=()=> 'gmc_etapa9_respaldo_local_'+(firebaseAuthGMC.currentUser?.uid||'sin_sesion');
+const gmcBancoFechaValida=x=>typeof x==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(x);
+const gmcBancoImporte=x=>Number.isFinite(Number(x))&&Number(x)>0&&Number(x)<=100000000&&Math.abs(Number(x)*100-Math.round(Number(x)*100))<1e-6;
+const gmcBancoCuentaValida=id=>(db.cuentasBancarias||[]).some(x=>x.id===id);
+const gmcBancoFecha=()=>fechaSistemaCierre();
+function gmcBancoPendiente(){try{return JSON.parse(localStorage.getItem(gmcBancoPendienteClave())||'null')}catch{return null}}
+function gmcBancoEstado(t){const n=document.getElementById('gmcEstadoCajaBancos');if(n)n.textContent=t;}
+function gmcBancoGuardarRespaldo(){
+ const key=gmcBancoRespaldoClave();if(localStorage.getItem(key))return;
+ const anterior=(()=>{try{return JSON.parse(localStorage.getItem(gmcBancoRespaldoPrevioClave)||'null')}catch{return null}})()||gmcBancoLegacyInicial;
+ if(anterior.cuentasBancarias.length||anterior.movimientosBancarios.length||anterior.gastos.length||anterior.historialCambiosGastos.length||Object.keys(anterior.gestionCheques).length){localStorage.setItem(key,JSON.stringify(anterior));}
+}
+function gmcBancoActualizarVista(){
+ const listo=gmcBancoColecciones.every(k=>gmcBancoListos[k]===true);
+ const pendientes=gmcBancoColecciones.filter(k=>!gmcBancoListos[k]);
+ if(!listo){gmcBancoEstado('Caja Bancos: esperando confirmación del servidor ('+pendientes.join(', ')+'). No registre movimientos.');return;}
+ const cuentaNum=(db.cuentasBancarias||[]).length,pend=gmcBancoPendiente();
+ gmcBancoEstado('Caja Bancos conectado a Cloud Firestore · '+cuentaNum+' cuenta(s), '+(db.movimientosBancarios||[]).length+' ingreso(s), '+(db.gastos||[]).length+' gasto(s) administrativo(s).'+(pend?' ATENCIÓN: existe una operación pendiente: compruébela antes de continuar.':''));
+ const r=(()=>{try{return JSON.parse(localStorage.getItem(gmcBancoRespaldoClave())||'null')}catch{return null}})();
+ const hayHist=r&&(r.cuentasBancarias.length||r.movimientosBancarios.length||r.gastos.length||r.historialCambiosGastos.length||Object.keys(r.gestionCheques||{}).length);
+ const yaDatos=gmcBancoColecciones.some(k=>(gmcBancoDatos[k]||[]).length>0);
+ const b=document.getElementById('gmcBtnMigrarBancos');if(b)b.style.display=hayHist&&!yaDatos&&firebaseRolGMC==='admin'?'':'none';
+}
+function gmcDetenerCajaBancosFirebase(){
+ // Copia local antes del primer vaciado al iniciar sesión.
+ if(!gmcBancoSesion&&firebaseRolGMC==='admin'&&firebaseAuthGMC.currentUser)gmcBancoGuardarRespaldo();
+ for(const stop of gmcBancoUnsubs.splice(0)){try{stop()}catch{}}
+ gmcBancoSesion='';gmcBancoListos={};gmcBancoDatos={};gmcBancoOcupado=false;
+ for(const key of ['cuentasBancarias','movimientosBancarios','gastos','historialCambiosGastos'])db[key]=[];
+ db.gestionCheques={};gmcBancoEstado('Caja Bancos: inicie sesión como administrador.');
+}
+function gmcSuscribirCajaBancosFirebase(uidSesion){
+ for(const stop of gmcBancoUnsubs.splice(0)){try{stop()}catch{}}
+ gmcBancoListos={};gmcBancoDatos={};gmcBancoSesion=uidSesion;
+ if(firebaseRolGMC!=='admin'){gmcDetenerCajaBancosFirebase();return;}
+ gmcBancoGuardarRespaldo();
+ for(const key of ['cuentasBancarias','movimientosBancarios','gastos','historialCambiosGastos'])db[key]=[];
+ db.gestionCheques={};gmcBancoEstado('Caja Bancos: conectando con Cloud Firestore…');
+ for(const nombre of gmcBancoColecciones){
+  const unsub=onSnapshot(collection(firestoreGMC,nombre),{includeMetadataChanges:true},snap=>{
+   if(gmcBancoSesion!==uidSesion||firebaseAuthGMC.currentUser?.uid!==uidSesion)return;
+   gmcBancoListos[nombre]=!snap.metadata.fromCache&&!snap.metadata.hasPendingWrites;
+   gmcBancoDatos[nombre]=snap.docs.map(d=>({...d.data(),id:d.id}));
+   if(nombre==='gastosAdministrativos')db.gastos=gmcBancoDatos[nombre];
+   else if(nombre==='gestionChequesBanco')db.gestionCheques=Object.fromEntries(gmcBancoDatos[nombre].map(x=>[x.id,x]));
+   else db[nombre]=gmcBancoDatos[nombre];
+   gmcBancoActualizarVista();renderAll();
+  },err=>{
+   if(gmcBancoSesion!==uidSesion)return;
+   gmcBancoListos[nombre]=false;gmcBancoEstado('Error al consultar '+nombre+': '+mensajeFirebaseGMC(err));
+  });
+  gmcBancoUnsubs.push(unsub);
+ }
+}
+function gmcBancoExigir(){
+ if(!adminAutenticado||firebaseRolGMC!=='admin'||!firebaseAuthGMC.currentUser||document.body.classList.contains('sesion-bloqueada'))throw Error('Solo el administrador autenticado puede operar Caja Bancos.');
+ if(!navigator.onLine||!gmcBancoColecciones.every(k=>gmcBancoListos[k]))throw Error('Espere la sincronización completa de Caja Bancos con el servidor.');
+ if(gmcBancoOcupado)throw Error('Hay una operación bancaria en curso.');
+}
+function gmcBancoAviso(err){alert(err?.message||mensajeFirebaseGMC(err))}
+const gmcBancoDocIdOrigen=id=>'origen_'+id;
+async function gmcBancoAplicarPendiente(p){
+ gmcBancoExigir();gmcBancoOcupado=true;
+ try{
+  const col=p.tipo==='cuenta'?'cuentasBancarias':p.tipo==='gasto'?'gastosAdministrativos':'movimientosBancarios',ref=doc(firestoreGMC,col,p.registro.id);
+  const resultado=await runTransaction(firestoreGMC,async tx=>{
+   const ya=await tx.get(ref);
+   if(ya.exists()){
+    const a=ya.data(),b=p.registro;
+    if(a.id!==b.id|| (p.tipo==='cuenta'? (a.banco!==b.banco||a.nombre!==b.nombre||a.saldoInicial!==b.saldoInicial) : p.tipo==='gasto'?(a.valor!==b.valor||a.cuentaBancariaId!==b.cuentaBancariaId||a.fecha!==b.fecha||a.concepto!==b.concepto) : (a.cuentaId!==b.cuentaId||a.valor!==b.valor||a.tipo!==b.tipo||a.origenId!==b.origenId)))throw Error('El identificador ya está utilizado por otra operación. No se realizará ninguna escritura.');
+    return 'existente';
+   }
+   if(p.tipo==='movimiento'||p.tipo==='gasto'){
+    const cuenta=await tx.get(doc(firestoreGMC,'cuentasBancarias',p.tipo==='gasto'?p.registro.cuentaBancariaId:p.registro.cuentaId));
+    if(!cuenta.exists())throw Error('La cuenta bancaria de destino no existe en Firestore.');
+   }
+   tx.set(ref,{...p.registro,creadoServidor:serverTimestamp()});return 'nuevo';
+  });
+  localStorage.removeItem(gmcBancoPendienteClave());gmcBancoActualizarVista();
+  cerrarModal();alert(resultado==='nuevo'?'Operación bancaria registrada correctamente en Firestore.':'Operación previamente confirmada; no se ha duplicado.');
+  return resultado;
+ }finally{gmcBancoOcupado=false;}
+}
+async function gmcBancoCrearPendiente(tipo,registro){
+ gmcBancoExigir();if(gmcBancoPendiente())throw Error('Hay una operación bancaria pendiente. Pulse «Comprobar operación pendiente» antes de registrar otra.');
+ const p={tipo,registro,uid:firebaseAuthGMC.currentUser.uid};localStorage.setItem(gmcBancoPendienteClave(),JSON.stringify(p));
+ return gmcBancoAplicarPendiente(p);
+}
+window.gmcVerificarOperacionBanco=async()=>{
+ const p=gmcBancoPendiente();if(!p)return alert('No hay operaciones bancarias pendientes.');
+ if(p.uid!==firebaseAuthGMC.currentUser?.uid)return alert('La operación corresponde a otra sesión.');
+ try{await gmcBancoAplicarPendiente(p);}catch(e){gmcBancoAviso(e);}
+};
+window.crearCuentaBancaria=async()=>{
+ try{
+  gmcBancoExigir();const banco=document.getElementById('cbBanco')?.value.trim(),nombre=document.getElementById('cbNombre')?.value.trim(),numero=document.getElementById('cbNumero')?.value.trim()||'';
+  const saldo=Number(document.getElementById('cbSaldoInicial')?.value);
+  if(!banco||!nombre||banco.length>120||nombre.length>150||numero.length>100)throw Error('Ingrese datos válidos para la cuenta bancaria.');
+  if(!Number.isFinite(saldo)||saldo<0||saldo>100000000||Math.abs(saldo*100-Math.round(saldo*100))>1e-6)throw Error('El saldo inicial debe ser válido y tener hasta dos decimales.');
+  await gmcBancoCrearPendiente('cuenta',{id:uid(),banco,nombre,numero,saldoInicial:bancoCentavos(saldo)/100,fechaCreacion:gmcBancoFecha(),etapaFirebase:'etapa9',operadorId:firebaseAuthGMC.currentUser.uid});
+ }catch(e){gmcBancoAviso(e)}
+};
+window.guardarDepositoBancario=async()=>{
+ try{
+  gmcBancoExigir();const cuentaId=document.getElementById('bdCuenta')?.value,fecha=document.getElementById('bdFecha')?.value,tipo=document.getElementById('bdTipo')?.value;
+  if(!gmcBancoCuentaValida(cuentaId))throw Error('Seleccione una cuenta bancaria válida.');
+  if(!gmcBancoFechaValida(fecha))throw Error('Ingrese una fecha válida.');
+  let valor,origenId='',descripcion='Depósito / ingreso externo';
+  if(tipo==='transferencia_venta'){
+   if(!gmcVentasListas)throw Error('Espere la sincronización de ventas de Firestore.');
+   origenId=document.getElementById('bdOrigen')?.value||'';
+   const origen=bancoTransferenciasDisponibles().find(t=>t.id===origenId);
+   if(!origen)throw Error('Esta transferencia ya fue utilizada o no está disponible.');
+   valor=origen.valor;descripcion='Transferencia de ventas · '+origen.descripcion;
+  }else if(tipo==='manual')valor=Number(document.getElementById('bdValor')?.value);
+  else throw Error('Origen bancario no válido.');
+  if(!gmcBancoImporte(valor))throw Error('Importe inválido (máximo dos decimales).');
+  const referencia=document.getElementById('bdReferencia')?.value.trim()||'';
+  const registro={id:origenId?gmcBancoDocIdOrigen(origenId):uid(),cuentaId,fecha,tipo,origenId,valor:bancoCentavos(valor)/100,descripcion,referencia,etapaFirebase:'etapa9',operadorId:firebaseAuthGMC.currentUser.uid};
+  await gmcBancoCrearPendiente('movimiento',registro);
+ }catch(e){gmcBancoAviso(e)}
+};
+// Los gastos administrativos se guardan junto a las cuentas en Firestore.
+window.guardarGasto=async()=>{
+ try{
+  gmcBancoExigir();const cuentaBancariaId=document.getElementById('gaCuentaBanco')?.value||'';
+  const g={id:uid(),fecha:document.getElementById('gaFecha')?.value||gmcBancoFecha(),categoria:document.getElementById('gaCategoria')?.value||'',concepto:document.getElementById('gaConcepto')?.value.trim()||'',documento:document.getElementById('gaDocumento')?.value.trim()||'',valor:Number(document.getElementById('gaValor')?.value),tercero:document.getElementById('gaTercero')?.value.trim()||'',cuentaBancariaId};
+  if(!gmcBancoFechaValida(g.fecha)||!g.concepto||g.concepto.length>200||!gmcBancoImporte(g.valor)||!gmcBancoCuentaValida(g.cuentaBancariaId))throw Error('Complete fecha, concepto, importe y cuenta bancaria válidos.');
+  g.valor=bancoCentavos(g.valor)/100;g.etapaFirebase='etapa9';g.operadorId=firebaseAuthGMC.currentUser.uid;
+  await gmcBancoCrearPendiente('gasto',g);
+ }catch(e){gmcBancoAviso(e)}
+};
+async function gmcBancoModificarGasto(id,accion,nuevo,motivo){
+ gmcBancoExigir();if(!motivo||motivo.length>600)throw Error('Ingrese un motivo válido.');
+ const usuario=firebaseAuthGMC.currentUser.uid,evidenciaId=uid(),ref=doc(firestoreGMC,'gastosAdministrativos',id),evi=doc(firestoreGMC,'historialCambiosGastos',evidenciaId);
+ gmcBancoOcupado=true;
+ try{
+  await runTransaction(firestoreGMC,async tx=>{
+   const original=await tx.get(ref);if(!original.exists())throw Error('El gasto ya no existe en Firestore.');
+   const actual=original.data(),local=(db.gastos||[]).find(x=>x.id===id);
+   if(!local||JSON.stringify({...local,creadoServidor:undefined})!==JSON.stringify({...actual,creadoServidor:undefined})){
+     if(!local||local.valor!==actual.valor||local.cuentaBancariaId!==actual.cuentaBancariaId||local.concepto!==actual.concepto)throw Error('El gasto fue modificado desde otro dispositivo. Actualice la pantalla antes de corregir.');
+   }
+   if(accion==='EDITAR'){
+    const cuenta=await tx.get(doc(firestoreGMC,'cuentasBancarias',nuevo.cuentaBancariaId));if(!cuenta.exists())throw Error('Cuenta bancaria no encontrada.');
+   }
+   const res=accion==='EDITAR'?{...actual,...nuevo,ultimaEvidenciaId:evidenciaId}:null;
+   tx.set(evi,{id:evidenciaId,fecha:new Date().toISOString(),accion,administrador:usuario,operadorId:usuario,motivo,antes:actual,despues:res,etapaFirebase:'etapa9',creadoServidor:serverTimestamp()});
+   if(accion==='EDITAR')tx.set(ref,res);else tx.delete(ref);
+  });
+ }finally{gmcBancoOcupado=false;}
+}
+window.guardarVinculoGastoCuenta=async id=>{
+ try{
+  gmcBancoExigir();const g=db.gastos.find(x=>x.id===id),cuentaId=document.getElementById('gaAsignarCuenta')?.value,motivo=document.getElementById('gaAsignarMotivo')?.value.trim()||'';
+  if(!g||g.cuentaBancariaId||!gmcBancoCuentaValida(cuentaId))throw Error('Gasto o cuenta no disponibles.');
+  if(!await validarClaveAdministradorCompra(document.getElementById('gaAsignarClave')?.value||''))throw Error('Contraseña del administrador incorrecta.');
+  if(!confirm('¿Asignar la cuenta bancaria a este gasto y dejar evidencia?'))return;
+  await gmcBancoModificarGasto(id,'EDITAR',{cuentaBancariaId:cuentaId},motivo);cerrarModal();alert('Cuenta vinculada y registrada en Firestore.');
+ }catch(e){gmcBancoAviso(e)}
+};
+window.guardarEdicionGastoAdmin=async id=>{
+ try{
+  gmcBancoExigir();const g=db.gastos.find(x=>x.id===id);if(!g)throw Error('Gasto no encontrado.');
+  const motivo=document.getElementById('egMotivo')?.value.trim()||'',clave=document.getElementById('egClave')?.value||'';
+  const nuevo={fecha:document.getElementById('egFecha')?.value||'',categoria:document.getElementById('egCategoria')?.value||'',concepto:document.getElementById('egConcepto')?.value.trim()||'',documento:document.getElementById('egDocumento')?.value.trim()||'',valor:Number(document.getElementById('egValor')?.value),tercero:document.getElementById('egTercero')?.value.trim()||'',cuentaBancariaId:document.getElementById('egCuentaBanco')?.value||''};
+  if(!gmcBancoFechaValida(nuevo.fecha)||!nuevo.concepto||!gmcBancoImporte(nuevo.valor)||!gmcBancoCuentaValida(nuevo.cuentaBancariaId))throw Error('Ingrese fecha, concepto, importe y cuenta bancaria válidos.');
+  if(!await validarClaveAdministradorCompra(clave))throw Error('Contraseña del administrador incorrecta.');
+  if(!confirm('¿Confirmar edición de gasto y ajuste de saldo bancario?'))return;
+  nuevo.valor=bancoCentavos(nuevo.valor)/100;
+  await gmcBancoModificarGasto(id,'EDITAR',nuevo,motivo);cerrarModal();alert('Gasto administrativo actualizado en Firestore con evidencia.');
+ }catch(e){gmcBancoAviso(e)}
+};
+window.confirmarEliminarGastoAdmin=async id=>{
+ try{
+  gmcBancoExigir();const motivo=document.getElementById('egMotivo')?.value.trim()||'',clave=document.getElementById('egClave')?.value||'';
+  if(!await validarClaveAdministradorCompra(clave))throw Error('Contraseña del administrador incorrecta.');
+  if(!confirm('¿Eliminar gasto administrativo y restituir su importe al saldo?'))return;
+  await gmcBancoModificarGasto(id,'ELIMINAR',null,motivo);cerrarModal();alert('Gasto eliminado de Firestore; evidencia conservada.');
+ }catch(e){gmcBancoAviso(e)}
+};
+// Los cheques se depositan sin sumar al saldo. La efectivización crea movimiento
+// con ID determinista y actualiza su estado en el mismo commit.
+window.guardarDepositoCheque=async id=>{
+ try{
+  gmcBancoExigir();const c=registrosGestionCheques().find(x=>x.id===id),cuentaId=document.getElementById('chCuentaDestino')?.value,fecha=document.getElementById('chFechaDeposito')?.value;
+  if(!c||c.estado!=='recibido'||c.devuelta||c.sinOrigen||!gmcBancoCuentaValida(cuentaId)||!gmcBancoFechaValida(fecha)||fecha<c.fecha||fecha>gmcBancoFecha())throw Error('El cheque, la cuenta o la fecha no son válidos.');
+  if(!confirm('¿Registrar depósito del cheque sin acreditar todavía al banco?'))return;
+  const ref=doc(firestoreGMC,'gestionChequesBanco',id),registro={id,estado:'depositado',cuentaId,fechaDeposito:fecha,fechaEfectivo:'',datos:{id:c.id,ventaId:c.ventaId,numeroVenta:c.numeroVenta,cliente:c.cliente,devuelta:c.devuelta,origen:c.origen,fecha:c.fecha,valor:c.valor,bancoCheque:c.bancoCheque,numeroCheque:c.numeroCheque,titularCheque:c.titularCheque,fechaPrevista:c.fechaPrevista},operadorId:firebaseAuthGMC.currentUser.uid,etapaFirebase:'etapa9'};
+  gmcBancoOcupado=true;try{await runTransaction(firestoreGMC,async tx=>{if((await tx.get(ref)).exists())throw Error('Este cheque ya fue procesado desde otro dispositivo.');tx.set(ref,{...registro,creadoServidor:serverTimestamp()});});}finally{gmcBancoOcupado=false;}
+  cerrarModal();alert('Cheque depositado y sincronizado; todavía no acredita saldo.');
+ }catch(e){gmcBancoAviso(e)}
+};
+window.confirmarEfectivizacionCheque=async id=>{
+ try{
+  gmcBancoExigir();const c=registrosGestionCheques().find(x=>x.id===id),fecha=document.getElementById('chFechaEfectivo')?.value,anterior=(db.gestionCheques||{})[id];
+  if(!c||c.estado!=='depositado'||!anterior||!gmcBancoFechaValida(fecha)||fecha<anterior.fechaDeposito||fecha>gmcBancoFecha()||!gmcBancoCuentaValida(anterior.cuentaId))throw Error('Cheque o fecha no válidos para la acreditación.');
+  if(!confirm('¿Confirmas que este cheque ya se acreditó realmente en el banco?'))return;
+  const movimientoId=gmcBancoDocIdOrigen(id),refCh=doc(firestoreGMC,'gestionChequesBanco',id),refM=doc(firestoreGMC,'movimientosBancarios',movimientoId);
+  gmcBancoOcupado=true;
+  try{
+   const resultado=await runTransaction(firestoreGMC,async tx=>{
+    const ch=await tx.get(refCh),mov=await tx.get(refM),cuenta=await tx.get(doc(firestoreGMC,'cuentasBancarias',anterior.cuentaId));
+    if(!ch.exists()||!cuenta.exists())throw Error('Cheque o cuenta no encontrados en Firestore.');
+    if(mov.exists()){if(ch.data().estado==='efectivo'&&mov.data().origenId===id)return 'existente';throw Error('Movimiento de origen ya existente con datos distintos.');}
+    if(ch.data().estado!=='depositado'||ch.data().cuentaId!==anterior.cuentaId)throw Error('El cheque ya fue modificado en otro dispositivo.');
+    const reg={id:movimientoId,cuentaId:anterior.cuentaId,fecha,tipo:'cheque_efectivizado',origenId:id,valor:bancoCentavos(c.valor)/100,descripcion:'Cheque efectivizado · Venta '+c.numeroVenta+' · '+c.origen+' · '+c.cliente,referencia:'Cheque '+c.numeroCheque+' · '+c.bancoCheque,etapaFirebase:'etapa9',operadorId:firebaseAuthGMC.currentUser.uid};
+    tx.set(refM,{...reg,creadoServidor:serverTimestamp()});tx.update(refCh,{estado:'efectivo',fechaEfectivo:fecha});return 'nuevo';
+   });
+   cerrarModal();alert(resultado==='existente'?'Este cheque ya había sido acreditado; no se duplicó.':'Cheque efectivizado y acreditado una vez en Firestore.');
+  }finally{gmcBancoOcupado=false;}
+ }catch(e){gmcBancoAviso(e)}
+};
+// Migración manual, sólo con banco remoto completamente vacío. No mezcla datos
+// de distintos dispositivos ni crea saldos iniciales de forma automática.
+window.gmcMigrarCajaBancos=async()=>{
+ try{
+  gmcBancoExigir();const backup=JSON.parse(localStorage.getItem(gmcBancoRespaldoClave())||'null');if(!backup)throw Error('No existe respaldo bancario local.');
+  if(gmcBancoColecciones.some(k=>(gmcBancoDatos[k]||[]).length))throw Error('Ya existen datos bancarios en Firestore. No se permite mezclar ni duplicar datos locales.');
+  if(gmcBancoPendiente())throw Error('Existe una operación bancaria pendiente.');
+  const cuentas=backup.cuentasBancarias||[],movimientos=backup.movimientosBancarios||[],gastos=backup.gastos||[],evidencias=backup.historialCambiosGastos||[],cheques=Object.entries(backup.gestionCheques||{}).map(([id,v])=>({id,...v}));
+  const ids=new Set(cuentas.map(x=>x.id));if(ids.size!==cuentas.length)throw Error('Cuentas locales con ID duplicado.');
+  if(movimientos.some(m=>!ids.has(m.cuentaId))||gastos.some(g=>g.cuentaBancariaId&&!ids.has(g.cuentaBancariaId)))throw Error('Hay movimientos/gastos que mencionan cuentas inexistentes; no se puede migrar automáticamente.');
+  if(gastos.some(g=>!g.cuentaBancariaId))throw Error('Hay gastos históricos sin cuenta asignada. Asígnelos o revise su respaldo antes de migrar.');
+  const total=cuentas.length+movimientos.length+gastos.length+evidencias.length+cheques.length;
+  if(!total)return alert('No hay datos bancarios históricos para migrar.');
+  if(total>100)throw Error('Se detectaron '+total+' registros. Requiere una migración supervisada; no se ejecutará una importación parcial.');
+  if(!confirm('ATENCIÓN: importar '+total+' registros bancarios locales a Firestore. Solo haga esto si el navegador contiene el historial original completo y no existe en otro dispositivo. ¿Continuar?'))return;
+  const operadorId=firebaseAuthGMC.currentUser.uid,batch=writeBatch(firestoreGMC),stamp=serverTimestamp();
+  const set=(col,item)=>batch.set(doc(firestoreGMC,col,item.id),{...item,etapaFirebase:'etapa9',operadorId,creadoServidor:stamp});
+  cuentas.forEach(x=>set('cuentasBancarias',x));
+  const vistos=new Set();movimientos.forEach(m=>{const id=m.origenId?gmcBancoDocIdOrigen(m.origenId):m.id;if(vistos.has(id))throw Error('Se detectaron ingresos duplicados por origen.');vistos.add(id);set('movimientosBancarios',{...m,id,origenId:m.origenId||'',referencia:m.referencia||'',descripcion:m.descripcion||''})});
+  gastos.forEach(x=>set('gastosAdministrativos',x));
+  evidencias.forEach(x=>set('historialCambiosGastos',{...x,motivo:x.motivo||'Registro anterior',administrador:x.administrador||operadorId,antes:x.antes||{},despues:x.despues||null}));
+  cheques.forEach(x=>set('gestionChequesBanco',{...x,estado:x.estado||'depositado',fechaEfectivo:x.fechaEfectivo||'',fechaDeposito:x.fechaDeposito||'',datos:x.datos||{}}));
+  // Un único batch conserva atomicidad; la validación final la hace Firestore.
+  gmcBancoOcupado=true;try{await batch.commit();}finally{gmcBancoOcupado=false;}
+  alert('Migración bancaria registrada. Conserve su respaldo local original. Verifique los saldos desde otro dispositivo.');
+ }catch(e){gmcBancoAviso(e)}
+};
 
 </script>
 </body>
