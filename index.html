@@ -288,6 +288,8 @@
     <section id="metasCumplimiento" class="section">
       <div class="card">
         <h3>🎯 Metas semanales y mensuales por unidades vendidas</h3>
+        <p id="gmcEstadoMetas" class="note">Metas y Cumplimiento: conectando con Cloud Firestore. No registre cambios mientras se confirma el servidor.</p>
+        <div id="gmcMetasMigracionPanel" style="display:none;margin:10px 0" class="note"><strong>Respaldo local anterior:</strong> <span id="gmcMetasMigracionTexto"></span> <button type="button" class="btn btn-light" onclick="gmcMigrarMetasLocalesFirebase()">Migrar mis metas anteriores a Firestore</button><p>La migración es voluntaria. Solo está disponible mientras Firestore no contenga metas y nunca borra el respaldo local.</p></div>
         <p class="note">El cumplimiento principal se calcula por <strong>unidades de productos vendidos</strong>, no por el dinero cobrado. Las ventas a crédito cuentan por sus unidades y las ventas devueltas no cuentan. Puede definir objetivos por usuario, en todas sus rutas o en una ruta específica. La meta en dólares se mantiene como referencia opcional; el importe vendido representa ventas facturadas, no necesariamente dinero recaudado. Semana: lunes a domingo; mes: mes calendario.</p>
         <input type="hidden" id="metaEditarId">
         <div class="row">
@@ -3579,12 +3581,15 @@ function guardarMetaCumplimiento(){
     return alert('Ya existe una meta para ese usuario, ruta y período. Edítela si desea cambiar las unidades.');
   }
   const meta={id:editarId||uid(),tipo,fecha:rango.desde,usuarioId:usuario.id||'',usuarioNombre:usuario.nombre,ruta,unidades:Number(unidades.toFixed(2)),monto:Number(monto.toFixed(2))};
+  // Etapa 10: el registro es remoto; no se realiza nunca una escritura local de metas.
+  if(typeof window.gmcGuardarMetaFirebase!=='function')return alert('Metas: Firestore no está disponible. No se guardó ninguna meta.');
+  return window.gmcGuardarMetaFirebase(meta,editarId);
   if(editarId){const i=db.metasCumplimiento.findIndex(m=>m.id===editarId);if(i<0)return alert('No se encontró la meta a editar.');db.metasCumplimiento[i]=meta;}
   else db.metasCumplimiento.push(meta);
   cancelarEdicionMeta();save();
 }
 function editarMetaCumplimiento(id){
-  if(!adminAutenticado)return;
+  if(!adminAutenticado||!window.gmcMetasListas)return alert('Espere la sincronización de Metas con Firestore.');
   const m=db.metasCumplimiento.find(x=>x.id===id);if(!m)return;
   const u=m.usuarioId?'id:'+m.usuarioId:'nombre:'+String(m.usuarioNombre||'').trim().toLocaleLowerCase('es');
   const usuarioSelect=document.getElementById('metaUsuario');
@@ -3610,9 +3615,8 @@ function eliminarMetaCumplimiento(id){
   if(!adminAutenticado)return;
   const m=db.metasCumplimiento.find(x=>x.id===id);if(!m)return;
   if(!confirm('¿Eliminar la meta de '+m.usuarioNombre+'? No se modificarán las ventas.'))return;
-  db.metasCumplimiento=db.metasCumplimiento.filter(x=>x.id!==id);
-  if(document.getElementById('metaEditarId').value===id)cancelarEdicionMeta();
-  save();
+  if(typeof window.gmcEliminarMetaFirebase!=='function')return alert('Metas: Firestore no está disponible. No se eliminó ninguna meta.');
+  return window.gmcEliminarMetaFirebase(id);
 }
 function metaClaveVenta(v){
   if(v.usuarioVentaId)return 'id:'+String(v.usuarioVentaId);
@@ -3715,7 +3719,7 @@ openModal('Preparando acceso Firebase','<p class="note">Conectando Firebase Auth
 // La facturación, inventario, abonos y cajas continúan aislados en localStorage de PRUEBAS.
 import {initializeApp, getApps, getApp} from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-app.js';
 import {getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, EmailAuthProvider, reauthenticateWithCredential, updatePassword, sendPasswordResetEmail} from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-auth.js';
-import {getFirestore, doc, getDoc, getDocFromServer, collection, query, where, onSnapshot, setDoc, updateDoc, deleteDoc, runTransaction, serverTimestamp, writeBatch} from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-firestore.js';
+import {getFirestore, doc, getDoc, getDocFromServer, getDocsFromServer, collection, query, where, onSnapshot, setDoc, updateDoc, deleteDoc, runTransaction, serverTimestamp, writeBatch} from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-firestore.js';
 const configFirebaseGMC = {
   apiKey:'AIzaSyBtj-y2p3qAYWknIX6J5aK6DAzkD9bOc1s',
   authDomain:'gmcdistribucionesdb.firebaseapp.com',
@@ -3764,7 +3768,7 @@ function modalEntradaFirebaseGMC(tipo='usuario'){
   const admin=tipo==='admin';
   const primeraConfiguracion=!localStorage.getItem(ADMIN_AUTH_KEY);
   openModal(admin?'Acceso del administrador · Firebase':'Ingreso de usuario · Firebase',`
-    <p class="note">Autenticación con Firebase. Productos, clientes, inventario, ventas, abonos y cartera están conectados a Firestore en estas pruebas. Caja Bancos se centraliza en la Etapa 9. Compras y otros módulos no incluidos permanecen locales.</p>
+    <p class="note">Autenticación con Firebase. Productos, clientes, inventario, ventas, abonos y cartera están conectados a Firestore en estas pruebas. Caja Bancos está centralizada desde la Etapa 9; Metas y Cumplimiento se centraliza en la Etapa 10. Compras y otros módulos no incluidos permanecen locales.</p>
     <div class="row"><div class="c6"><label>Correo electrónico</label><input id="fbLoginEmail" type="email" autocomplete="username"></div><div class="c6"><label>Contraseña</label><input id="fbLoginPass" type="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')gmcIngresarFirebase('${admin?'admin':'usuario'}')"></div></div>
     <div class="actions" style="margin-top:12px"><button class="btn btn-primary" onclick="gmcIngresarFirebase('${admin?'admin':'usuario'}')">Ingresar</button>${admin?'<button class="btn btn-light" onclick="abrirLoginUsuario()">Ingresar como usuario</button>':'<button class="btn btn-light" onclick="abrirAccesoAdmin()">Ingresar como administrador</button>'}${primeraConfiguracion?'<button class="btn btn-light" onclick="gmcMostrarRegistroFirebase()">Primera configuración</button>':''}</div>`);
   document.getElementById('fbLoginEmail')?.focus();
@@ -3969,6 +3973,7 @@ const gmcMaestroEstado=(tipo,texto)=>{
  if(nodo)nodo.textContent=texto;
 };
 function gmcDetenerMaestrosFirebase(){
+ gmcDetenerMetasFirebase();
  gmcDetenerCajaBancosFirebase();
  gmcDetenerGastosFirebase();
  gmcDetenerCierresFirebase();
@@ -3990,6 +3995,7 @@ function gmcDetenerMaestrosFirebase(){
 function gmcSuscribirMaestrosFirebase(uidSesion){
  gmcDetenerMaestrosFirebase();
  gmcMasterSesion=uidSesion;
+ gmcSuscribirMetasFirebase(uidSesion);
  gmcSuscribirCajaBancosFirebase(uidSesion);
  gmcSuscribirAsignacionesFirebase(uidSesion);
  gmcSuscribirVentasFirebase(uidSesion);
@@ -5037,6 +5043,151 @@ const gmcBancoColecciones=['cuentasBancarias','movimientosBancarios','gastosAdmi
 // Capturar el historial local al cargar la página, ANTES de que el login
 // limpie las copias locales para conectarse a Firestore.
 const gmcBancoLegacyInicial={cuentasBancarias:structuredClone(db.cuentasBancarias||[]),movimientosBancarios:structuredClone(db.movimientosBancarios||[]),gastos:structuredClone(db.gastos||[]),historialCambiosGastos:structuredClone(db.historialCambiosGastos||[]),gestionCheques:structuredClone(db.gestionCheques||{})};
+
+// GMC DISTRIBUCIONES - ETAPA 10: metas y cumplimiento, solo administrador.
+// Ningún movimiento de ventas/inventario/caja se realiza en este módulo.
+const gmcMetasPrimeraClave='gmc_etapa10_metadatos_respaldo_evaluados';
+const gmcMetasCopiaClave='gmc_etapa10_metas_locales_originales';
+try{
+ if(!localStorage.getItem(gmcMetasPrimeraClave)){
+  if(Array.isArray(db.metasCumplimiento)&&db.metasCumplimiento.length&&!localStorage.getItem(gmcMetasCopiaClave))
+   localStorage.setItem(gmcMetasCopiaClave,JSON.stringify(db.metasCumplimiento));
+  localStorage.setItem(gmcMetasPrimeraClave,'1');
+ }
+}catch(e){console.warn('No se pudo generar respaldo de metas',e)}
+let gmcMetasUnsub=null,gmcMetasSesion='',gmcMetasOcupado=false;
+window.gmcMetasListas=false;
+const gmcMetaNodo=()=>document.getElementById('gmcEstadoMetas');
+function gmcEstadoMetas(texto){const nodo=gmcMetaNodo();if(nodo)nodo.textContent=texto;}
+function gmcMetaRespaldo(){try{const a=JSON.parse(localStorage.getItem(gmcMetasCopiaClave)||'[]');return Array.isArray(a)?a:[]}catch{return []}}
+function gmcMetaIdDeterminista(m){
+ const identidad=m.usuarioId?'id:'+m.usuarioId:'nombre:'+String(m.usuarioNombre||'').trim().toLocaleLowerCase('es');
+ const bytes=new TextEncoder().encode(JSON.stringify([m.tipo,m.fecha,identidad,m.ruta||'']));
+ if(bytes.length>650)throw Error('Los datos de la meta son demasiado extensos.');
+ return 'meta_'+btoa(String.fromCharCode(...bytes)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
+function gmcMetasDatosValidos(m,permiteObjetivoCero=false){
+ return m && ['semanal','mensual'].includes(m.tipo) && metaRango(m.tipo,m.fecha)?.desde===m.fecha
+ && typeof m.usuarioNombre==='string'&&m.usuarioNombre.trim().length>0&&m.usuarioNombre.length<=120
+ && typeof m.usuarioId==='string'&&m.usuarioId.length<=128&&typeof m.ruta==='string'&&m.ruta.length<=64
+ && Number.isFinite(m.unidades)&&(permiteObjetivoCero?m.unidades>=0:m.unidades>0)&&m.unidades<=100000000
+ && Number.isFinite(m.monto)&&m.monto>=0&&m.monto<=100000000;
+}
+function gmcMetaVerificar(){
+ if(!adminAutenticado||firebaseRolGMC!=='admin'||!firebaseAuthGMC.currentUser||document.body.classList.contains('sesion-bloqueada'))throw Error('Solo el administrador autenticado puede modificar metas.');
+ if(!window.gmcMetasListas||!navigator.onLine)throw Error('Espere la sincronización de Metas y Cumplimiento con el servidor Firestore.');
+ if(gmcMetasOcupado)throw Error('Hay una operación de metas en curso.');
+}
+function gmcMetasMigracionEstado(){
+ const panel=document.getElementById('gmcMetasMigracionPanel'),texto=document.getElementById('gmcMetasMigracionTexto');
+ if(!panel||!texto)return;
+ const originales=gmcMetaRespaldo(),permitido=adminAutenticado&&firebaseRolGMC==='admin'&&window.gmcMetasListas&&db.metasCumplimiento.length===0&&originales.length>0;
+ panel.style.display=permitido?'':'none';
+ texto.textContent=permitido?originales.length+' meta(s) guardada(s) previamente en este navegador.':'';
+}
+function gmcDetenerMetasFirebase(){
+ if(gmcMetasUnsub){try{gmcMetasUnsub()}catch{}gmcMetasUnsub=null;}
+ gmcMetasSesion='';window.gmcMetasListas=false;db.metasCumplimiento=[];gmcMetasOcupado=false;
+ gmcEstadoMetas('Metas: inicie sesión como administrador.');gmcMetasMigracionEstado();
+}
+function gmcSuscribirMetasFirebase(uidSesion){
+ if(gmcMetasUnsub){try{gmcMetasUnsub()}catch{}gmcMetasUnsub=null;}
+ gmcMetasSesion=uidSesion;window.gmcMetasListas=false;db.metasCumplimiento=[];
+ if(firebaseRolGMC!=='admin'){gmcEstadoMetas('Metas: acceso exclusivo del administrador.');return;}
+ gmcEstadoMetas('Metas: conectando con Cloud Firestore…');
+ gmcMetasUnsub=onSnapshot(collection(firestoreGMC,'metasCumplimiento'),{includeMetadataChanges:true},snap=>{
+  if(gmcMetasSesion!==uidSesion||firebaseAuthGMC.currentUser?.uid!==uidSesion)return;
+  window.gmcMetasListas=!snap.metadata.fromCache&&!snap.metadata.hasPendingWrites;
+  db.metasCumplimiento=snap.docs.map(d=>({...d.data(),id:d.id}));
+  gmcEstadoMetas(window.gmcMetasListas?'Metas conectadas a Cloud Firestore · '+db.metasCumplimiento.length+' registro(s).':'Metas: sincronización pendiente del servidor; no guarde modificaciones.');
+  gmcMetasMigracionEstado();renderMetasCumplimiento();
+ },err=>{
+  if(gmcMetasSesion!==uidSesion)return;
+  window.gmcMetasListas=false;db.metasCumplimiento=[];
+  gmcEstadoMetas('No se pudo consultar Metas: '+mensajeFirebaseGMC(err));gmcMetasMigracionEstado();renderMetasCumplimiento();
+ });
+}
+window.gmcGuardarMetaFirebase=async(meta,editarId='')=>{
+ try{
+  gmcMetaVerificar();
+  const nueva={...meta};delete nueva.id;
+  if(!gmcMetasDatosValidos(nueva))throw Error('La meta contiene valores inválidos.');
+  const idNuevo=gmcMetaIdDeterminista(nueva),refNuevo=doc(firestoreGMC,'metasCumplimiento',idNuevo);
+  const refAnterior=editarId?doc(firestoreGMC,'metasCumplimiento',editarId):null;
+  gmcMetasOcupado=true;
+  const resultado=await runTransaction(firestoreGMC,async tx=>{
+   // Lecturas siempre antes de las escrituras para garantizar atomicidad.
+   const anterior=refAnterior?await tx.get(refAnterior):null;
+   const destino=(!refAnterior||editarId!==idNuevo)?await tx.get(refNuevo):anterior;
+   if(refAnterior&&!anterior.exists())throw Error('La meta fue eliminada en otro dispositivo; actualice la página.');
+   if(!refAnterior&&destino.exists())throw Error('Ya existe esta meta para el usuario, ruta y período. Edítela.');
+   if(refAnterior&&editarId!==idNuevo&&destino.exists())throw Error('Ya existe una meta para el destino seleccionado.');
+   const revisionActual=anterior?Number(anterior.data().revision||0):0;
+   const cambioClave=!!refAnterior&&editarId!==idNuevo;
+   if(refAnterior){
+    const local=db.metasCumplimiento.find(x=>x.id===editarId);
+    if(!local||Number(local.revision||0)!==revisionActual)throw Error('Esta meta cambió en otro dispositivo. Revise los datos antes de guardarla.');
+   }
+   const ahora=serverTimestamp();
+   const dato={...nueva,id:idNuevo,etapaFirebase:'etapa10',revision:cambioClave?1:revisionActual+1,
+     operadorId:refAnterior&&!cambioClave?anterior.data().operadorId:firebaseAuthGMC.currentUser.uid,
+     creadoServidor:refAnterior&&!cambioClave?anterior.data().creadoServidor:ahora,
+     actualizadoPor:firebaseAuthGMC.currentUser.uid,actualizadoServidor:ahora};
+   tx.set(refNuevo,dato);
+   if(refAnterior&&editarId!==idNuevo)tx.delete(refAnterior);
+   return refAnterior?'actualizada':'creada';
+  });
+  cancelarEdicionMeta();alert('Meta '+resultado+' en Firestore. Se sincronizará en todos los dispositivos.');
+ }catch(e){alert(e?.message||mensajeFirebaseGMC(e))}
+ finally{gmcMetasOcupado=false}
+};
+window.gmcEliminarMetaFirebase=async id=>{
+ try{
+  gmcMetaVerificar();gmcMetasOcupado=true;
+  const ref=doc(firestoreGMC,'metasCumplimiento',id);
+  await runTransaction(firestoreGMC,async tx=>{
+   const d=await tx.get(ref);if(!d.exists())return;
+   const local=db.metasCumplimiento.find(x=>x.id===id);
+   if(!local||Number(local.revision||0)!==Number(d.data().revision||0))throw Error('Esta meta se modificó en otro dispositivo. Revise los datos antes de eliminarla.');
+   tx.delete(ref);
+  });
+  if(document.getElementById('metaEditarId').value===id)cancelarEdicionMeta();
+  alert('Meta eliminada de Firestore. Las ventas no se modificaron.');
+ }catch(e){alert(e?.message||mensajeFirebaseGMC(e))}
+ finally{gmcMetasOcupado=false}
+};
+window.gmcMigrarMetasLocalesFirebase=async()=>{
+ try{
+  gmcMetaVerificar();const anteriores=gmcMetaRespaldo();
+  if(!anteriores.length)throw Error('No hay metas locales pendientes de migración.');
+  if(anteriores.length>40)throw Error('El respaldo supera las 40 metas permitidas por lote. No se modificaron los datos.');
+  if(db.metasCumplimiento.length)throw Error('Firestore ya contiene metas; se canceló la migración para no duplicar registros.');
+  const metas=anteriores.map((m,i)=>{
+   const base={tipo:String(m.tipo||''),fecha:metaRango(m.tipo,m.fecha)?.desde||'',
+    usuarioId:String(m.usuarioId||''),usuarioNombre:String(m.usuarioNombre||''),ruta:String(m.ruta||''),
+    unidades:Number(m.unidades||0),monto:Number(m.monto||0)};
+   if(!gmcMetasDatosValidos(base,true))throw Error('La meta local '+(i+1)+' es inválida. No se importó ninguna.');
+   return {...base,id:gmcMetaIdDeterminista(base)};
+  });
+  if(new Set(metas.map(m=>m.id)).size!==metas.length)throw Error('Hay metas locales duplicadas. Revise el respaldo antes de migrarlas.');
+  if(!confirm('¿Migrar '+metas.length+' metas anteriores a Firestore? Solo se permite si la colección remota está vacía. Las ventas no se alterarán y el respaldo local permanecerá guardado.'))return;
+  gmcMetasOcupado=true;
+  const lista=await getDocsFromServer(collection(firestoreGMC,'metasCumplimiento'));
+  if(!lista.empty)throw Error('Se han registrado metas en otro dispositivo. No se hizo la migración.');
+  const refs=metas.map(m=>doc(firestoreGMC,'metasCumplimiento',m.id));
+  await runTransaction(firestoreGMC,async tx=>{
+   const existentes=[];for(const ref of refs)existentes.push(await tx.get(ref));
+   if(existentes.some(d=>d.exists()))throw Error('Una meta ya existe en Firestore; se canceló toda la migración.');
+   for(let i=0;i<metas.length;i++){
+    const ahora=serverTimestamp();tx.set(refs[i],{...metas[i],etapaFirebase:'etapa10',revision:1,
+      operadorId:firebaseAuthGMC.currentUser.uid,creadoServidor:ahora,
+      actualizadoPor:firebaseAuthGMC.currentUser.uid,actualizadoServidor:ahora});
+   }
+  });
+  alert('Se migraron '+metas.length+' metas. El respaldo anterior se conservó sin modificaciones.');
+ }catch(e){alert(e?.message||mensajeFirebaseGMC(e))}
+ finally{gmcMetasOcupado=false}
+};
 // Persistir copia preventiva incluso si primero ingresa un vendedor.
 const gmcBancoRespaldoPrevioClave='gmc_etapa9_historico_local_previo';
 try{if(!localStorage.getItem(gmcBancoRespaldoPrevioClave)&&[gmcBancoLegacyInicial.cuentasBancarias,gmcBancoLegacyInicial.movimientosBancarios,gmcBancoLegacyInicial.gastos,gmcBancoLegacyInicial.historialCambiosGastos].some(a=>a.length)||!localStorage.getItem(gmcBancoRespaldoPrevioClave)&&Object.keys(gmcBancoLegacyInicial.gestionCheques).length){localStorage.setItem(gmcBancoRespaldoPrevioClave,JSON.stringify(gmcBancoLegacyInicial));}}catch(e){console.warn('No se pudo respaldar Caja Bancos local',e)}
