@@ -726,7 +726,7 @@
             <div class="c12"><label>Observaciones</label><textarea id="cObs"></textarea></div>
           </div>
           <button class="btn btn-success" id="btnGenerarCierre" style="margin-top:10px" onclick="generarCierre()">Cerrar día del usuario</button>
-          <p class="note">Etapa 7: los cierres se confirman en Firestore. Los gastos operativos todavía son locales y pueden variar entre dispositivos; compruebe el efectivo recibido antes de cerrar. Se cierra únicamente la fecha actual del sistema. Puede elegir un usuario o «Cierre general — todos los usuarios». Los abonos de créditos se distinguen del efectivo de ventas directas y se suman al efectivo recibido, sin duplicar el total vendido. El efectivo recibido se compara con el efectivo del cierre diario para comprobar el cuadre de caja.</p>
+          <p class="note">Etapa 7: los cierres se confirman en Firestore. Los gastos operativos de Etapa 8 están sincronizados mediante Firestore; se exige conexión confirmada antes de cerrar. Se cierra únicamente la fecha actual del sistema. Puede elegir un usuario o «Cierre general — todos los usuarios». Los abonos de créditos se distinguen del efectivo de ventas directas y se suman al efectivo recibido, sin duplicar el total vendido. El efectivo recibido se compara con el efectivo del cierre diario para comprobar el cuadre de caja.</p>
         </div>
         <div class="card"><h3>Resumen del cierre seleccionado · Hoy</h3><div id="previewCierre"></div></div>
       </div>
@@ -748,7 +748,7 @@
       <div class="note" id="gmcCierrePendienteVendedor" style="display:none;margin:8px 0"></div>
       <div class="card">
         <h3>🔒 Mi cierre de caja · Hoy</h3>
-        <p class="note">El cierre pertenece exclusivamente al usuario conectado y utiliza la fecha actual de Ecuador. Registra tus ventas y abonos, y devuelve al inventario central las existencias que te quedaron sin vender. Los gastos operativos aún son locales en esta etapa.</p>
+        <p class="note">El cierre pertenece exclusivamente al usuario conectado y utiliza la fecha actual de Ecuador. Registra tus ventas y abonos, y devuelve al inventario central las existencias que te quedaron sin vender. Los gastos operativos de Etapa 8 se sincronizan con Firestore.</p>
         <div id="miCierreResumen"></div>
         <h3 style="margin-top:18px">Stock asignado y sobrantes</h3>
         <div class="table-wrap"><table><thead><tr><th>Producto</th><th>Entregado</th><th>Vendido</th><th>Sobrante</th></tr></thead><tbody id="miCierreStock"></tbody></table></div>
@@ -775,7 +775,9 @@
     <section id="misGastosOperativos" class="section">
       <div class="card">
         <h3>💸 Mis gastos operativos</h3>
-        <p class="note">Registre aquí únicamente los gastos de operación pagados con efectivo de la caja del usuario. Se descuentan del efectivo esperado y se muestran por separado de las ventas brutas en el cierre personal y en el cierre diario.</p>
+        <p class="note">Registre aquí únicamente los gastos de operación pagados con efectivo de la caja del usuario. Etapa 8: se guardan en Firestore y se sincronizan entre dispositivos antes del cierre. Se descuentan del efectivo esperado.</p>
+        <p class="note" id="gmcGastosEstado" aria-live="polite">Conectando gastos operativos a Firestore…</p>
+        <div class="note" id="gmcGastoPendiente" aria-live="polite" style="display:none"></div>
         <div class="row">
           <div class="c6"><label>Concepto del gasto</label><input id="goConcepto" placeholder="Ej.: transporte, combustible, alimentación"></div>
           <div class="c3"><label>Valor del gasto ($)</label><input id="goValor" type="number" min="0.01" step="0.01" placeholder="0.00"></div>
@@ -3197,19 +3199,8 @@ function gastosOperativosDelCierre(fecha,usuario,usuarioId=''){
  });
 }
 function registrarGastoOperativoUsuario(){
- if(!usuarioActual||adminAutenticado||document.body.classList.contains('sesion-bloqueada')||!usuarioActual.modulos.includes('ventas'))return alert('Ingrese con un usuario autorizado para ventas');
- const u=cargarUsuarios().find(x=>x.id===usuarioActual.id&&x.activo);
- if(!u)return alert('Su cuenta ya no está activa');
- if(cierreHechoHoyUsuario(u.id))return alert('Su caja ya está cerrada. No puede registrar más gastos operativos hoy');
- const concepto=document.getElementById('goConcepto').value.trim(),raw=document.getElementById('goValor').value.trim(),valor=Number(raw),observaciones=document.getElementById('goObservaciones').value.trim();
- if(!concepto)return alert('Ingrese el concepto del gasto operativo');
- if(!raw||!Number.isFinite(valor)||valor<=0||Math.round(valor*100)/100!==valor)return alert('Ingrese un valor positivo con máximo dos decimales');
- if(!confirm('¿Registrar el gasto operativo de '+money(valor)+' para la caja de '+u.usuario+'?'))return;
- const g={id:uid(),fecha:fechaSistemaCierre(),creado:new Date().toISOString(),usuarioId:u.id,usuario:u.usuario,concepto,observaciones,valor:redondeoCierre(valor)};
- db.gastosOperativosUsuarios.push(g);
- audit('GASTO OPERATIVO DE USUARIO',g.fecha+' · '+u.usuario+' · '+concepto+' · '+money(valor));
- document.getElementById('goConcepto').value='';document.getElementById('goValor').value='';document.getElementById('goObservaciones').value='';
- save();
+ if(typeof window.gmcRegistrarGastoOperativoFirebase!=='function')return alert('Gastos operativos: espere la conexión con Firestore. No se guardó el gasto.');
+ window.gmcRegistrarGastoOperativoFirebase();
 }
 function renderMisGastosOperativos(){
  const tb=document.getElementById('tbMisGastosOperativos'),resumen=document.getElementById('goResumenHoy');if(!tb||!resumen)return;
@@ -3722,7 +3713,7 @@ openModal('Preparando acceso Firebase','<p class="note">Conectando Firebase Auth
 // La facturación, inventario, abonos y cajas continúan aislados en localStorage de PRUEBAS.
 import {initializeApp, getApps, getApp} from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-app.js';
 import {getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, EmailAuthProvider, reauthenticateWithCredential, updatePassword, sendPasswordResetEmail} from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-auth.js';
-import {getFirestore, doc, getDoc, getDocFromServer, collection, query, where, onSnapshot, setDoc, updateDoc, deleteDoc, runTransaction} from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-firestore.js';
+import {getFirestore, doc, getDoc, getDocFromServer, collection, query, where, onSnapshot, setDoc, updateDoc, deleteDoc, runTransaction, serverTimestamp} from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-firestore.js';
 const configFirebaseGMC = {
   apiKey:'AIzaSyBtj-y2p3qAYWknIX6J5aK6DAzkD9bOc1s',
   authDomain:'gmcdistribucionesdb.firebaseapp.com',
@@ -3976,6 +3967,7 @@ const gmcMaestroEstado=(tipo,texto)=>{
  if(nodo)nodo.textContent=texto;
 };
 function gmcDetenerMaestrosFirebase(){
+ gmcDetenerGastosFirebase();
  gmcDetenerCierresFirebase();
  if(gmcVentasUnsub){try{gmcVentasUnsub()}catch{}gmcVentasUnsub=null;}
  gmcVentasListas=false;db.ventas=[];
@@ -3998,6 +3990,7 @@ function gmcSuscribirMaestrosFirebase(uidSesion){
  gmcSuscribirAsignacionesFirebase(uidSesion);
  gmcSuscribirVentasFirebase(uidSesion);
  gmcSuscribirCierresFirebase(uidSesion);
+ gmcSuscribirGastosFirebase(uidSesion);
  for(const tipo of ['productos','clientes']){
   db[tipo]=[];
   gmcMaestroEstado(tipo,'Conectando con Firestore…');
@@ -4645,9 +4638,139 @@ function gmcSuscribirCierresFirebase(uidSesion){
  });
  gmcMostrarCierrePendiente();
 }
+// ETAPA 8: gastos operativos centrales, append-only e idempotentes.
+// Los gastos históricos exclusivamente locales se preservan en otro arreglo, sin mezclarlos
+// ni duplicarlos en los cierres sincronizados. No se importan a Firestore automáticamente.
+let gmcGastosUnsub=null;
+let gmcGastosListos=false;
+let gmcGastoEnCurso=false;
+const gmcClavePendienteGasto=()=> 'gmc_gasto_pendiente_etapa8_'+(firebaseAuthGMC.currentUser?.uid||'sin_sesion');
+function gmcPendienteGasto(){try{return JSON.parse(localStorage.getItem(gmcClavePendienteGasto())||'null');}catch{return null;}}
+function gmcEstadoGastos(mensaje){const n=document.getElementById('gmcGastosEstado');if(n)n.textContent=mensaje;}
+function gmcMostrarGastoPendiente(){
+ const n=document.getElementById('gmcGastoPendiente');if(!n)return;
+ const p=gmcPendienteGasto();n.style.display=p?'':'none';
+ n.innerHTML=p?'<strong>⚠️ Gasto pendiente de confirmación en Firestore: '+esc(p.registro.fecha)+' · '+money(p.registro.valor)+'. No registre otro gasto hasta comprobar éste.</strong><div class="actions" style="margin-top:8px"><button class="btn btn-warning" onclick="gmcReintentarGastoOperativoFirebase()">Comprobar el mismo gasto</button><button class="btn btn-light" onclick="gmcDescartarGastoOperativoFirebase()">Descartar solo si no existe en Firestore</button></div>':'';
+}
+function gmcGuardarLegadoGastos(){
+ db.gastosOperativosLocalesHistoricos=Array.isArray(db.gastosOperativosLocalesHistoricos)?db.gastosOperativosLocalesHistoricos:[];
+ for(const gasto of db.gastosOperativosUsuarios||[]){
+  if(gasto.etapaFirebase==='etapa8')continue;
+  if(!db.gastosOperativosLocalesHistoricos.some(g=>g.id===gasto.id))db.gastosOperativosLocalesHistoricos.push(gasto);
+ }
+}
+function gmcDetenerGastosFirebase(){
+ if(gmcGastosUnsub){try{gmcGastosUnsub()}catch{}gmcGastosUnsub=null;}
+ gmcGuardarLegadoGastos();gmcGastosListos=false;db.gastosOperativosUsuarios=[];
+ gmcEstadoGastos('Inicie sesión con Firebase para consultar gastos operativos.');
+ gmcMostrarGastoPendiente();
+}
+function gmcSuscribirGastosFirebase(uidSesion){
+ gmcGuardarLegadoGastos();gmcGastosListos=false;db.gastosOperativosUsuarios=[];
+ gmcEstadoGastos('Conectando gastos operativos a Firestore…');
+ const origen=firebaseRolGMC==='admin'?collection(firestoreGMC,'gastosOperativosUsuarios'):
+    query(collection(firestoreGMC,'gastosOperativosUsuarios'),where('usuarioId','==',uidSesion));
+ gmcGastosUnsub=onSnapshot(origen,{includeMetadataChanges:true},snap=>{
+  if(gmcMasterSesion!==uidSesion||firebaseAuthGMC.currentUser?.uid!==uidSesion)return;
+  db.gastosOperativosUsuarios=snap.docs.map(d=>({...d.data(),id:d.id}));
+  gmcGastosListos=!snap.metadata.fromCache&&!snap.metadata.hasPendingWrites;
+  const legacy=(db.gastosOperativosLocalesHistoricos||[]).length;
+  gmcEstadoGastos(snap.metadata.fromCache?'Gastos en caché. Espere la confirmación del servidor.':
+    snap.metadata.hasPendingWrites?'Hay gastos todavía pendientes de confirmación.':
+    'Gastos operativos conectados a Firestore · '+db.gastosOperativosUsuarios.length+' registro(s).'+
+    (legacy?' Hay '+legacy+' gasto(s) históricos solo locales, conservados aparte y NO incluidos en cierres nuevos.':''));
+  try{localStorage.setItem(KEY,JSON.stringify(db))}catch(e){console.warn('Respaldo local gastos',e)}
+  gmcMostrarGastoPendiente();renderAll();
+ },error=>{
+  if(gmcMasterSesion!==uidSesion)return;
+  gmcGastosListos=false;db.gastosOperativosUsuarios=[];
+  gmcEstadoGastos('No se pudo leer gastos en Firestore: '+(error.message||mensajeFirebaseGMC(error)));
+  gmcMostrarGastoPendiente();renderAll();
+ });
+ gmcMostrarGastoPendiente();
+}
+async function gmcEjecutarGastoOperativoFirebase(pendiente){
+ const auth=firebaseAuthGMC.currentUser;
+ if(!auth||pendiente.uid!==auth.uid||pendiente.registro.usuarioId!==auth.uid)throw Error('El gasto pendiente corresponde a otra sesión.');
+ if(gmcGastoEnCurso)return;
+ if(!navigator.onLine||!gmcGastosListos||!gmcCierresListos)throw Error('Sin conexión confirmada a gastos y cierres de Firestore. Se conserva el gasto pendiente.');
+ gmcGastoEnCurso=true;
+ try{
+  const r=pendiente.registro;
+  const ref=doc(firestoreGMC,'gastosOperativosUsuarios',r.id);
+  const result=await runTransaction(firestoreGMC,async tx=>{
+   const previo=await tx.get(ref);
+   if(previo.exists()){
+    const d=previo.data();
+    if(d.usuarioId!==auth.uid||d.fecha!==r.fecha||Number(d.valor)!==Number(r.valor)||d.concepto!==r.concepto)throw Error('El ID del gasto ya existe con otros datos. Se requiere revisión antes de continuar.');
+    return {existente:true};
+   }
+   if(r.fecha!==today())throw Error('El gasto pendiente pertenece a otra fecha. No se registró retroactivamente.');
+   const cierreUsuario=await tx.get(doc(firestoreGMC,'cierresCaja',auth.uid+'_'+r.fecha));
+   const cierreGeneral=await tx.get(doc(firestoreGMC,'cierresCaja','general_'+r.fecha));
+   if(cierreUsuario.exists()||cierreGeneral.exists())throw Error('La caja del día ya fue cerrada. No se registró el gasto.');
+   tx.set(ref,{...r,creadoServidor:serverTimestamp()});
+   return {existente:false};
+  });
+  localStorage.removeItem(gmcClavePendienteGasto());gmcMostrarGastoPendiente();
+  for(const id of ['goConcepto','goValor','goObservaciones']){const n=document.getElementById(id);if(n)n.value='';}
+  alert(result.existente?'El gasto ya estaba confirmado en Firestore. No se duplicó.':'Gasto operativo registrado correctamente en Firestore.');
+ }catch(error){
+  gmcMostrarGastoPendiente();
+  alert('No fue posible confirmar el gasto: '+(error.message||mensajeFirebaseGMC(error))+' Se conserva el mismo identificador para comprobarlo; NO registre un segundo gasto.');
+ }finally{gmcGastoEnCurso=false;}
+}
+window.gmcRegistrarGastoOperativoFirebase=async()=>{
+ try{
+  if(firebaseRolGMC!=='vendedor'||!usuarioActual||!usuarioActual.modulos.includes('ventas')||firebaseAuthGMC.currentUser?.uid!==usuarioActual.id||document.body.classList.contains('sesion-bloqueada'))throw Error('Ingrese con una cuenta vendedora autorizada para ventas.');
+  if(!navigator.onLine||!gmcGastosListos||!gmcCierresListos)throw Error('Espere la sincronización de gastos y cierres con Firestore.');
+  if(gmcGastoEnCurso||gmcPendienteGasto()||gmcCierreEnCurso||gmcPendienteCierre())throw Error('Existe una operación pendiente. Compruébela antes de registrar otro gasto.');
+  if(cierreHechoHoyUsuario(usuarioActual.id)||(db.cierres||[]).some(c=>c.id==='general_'+today()))throw Error('El cierre del día ya fue confirmado. No se puede registrar otro gasto.');
+  const concepto=document.getElementById('goConcepto').value.trim();
+  const raw=document.getElementById('goValor').value.trim(),valor=Number(raw);
+  const observaciones=document.getElementById('goObservaciones').value.trim();
+  if(!concepto||concepto.length>200)throw Error('Ingrese un concepto de 1 a 200 caracteres.');
+  if(observaciones.length>600)throw Error('Las observaciones no pueden superar 600 caracteres.');
+  if(!raw||!Number.isFinite(valor)||valor<=0||valor>1000000||Math.abs(Math.round(valor*100)-valor*100)>0.000001)throw Error('Ingrese un valor positivo con máximo dos decimales.');
+  const importe=Math.round(valor*100)/100;
+  if(!confirm('¿Registrar el gasto operativo de '+money(importe)+' en Firestore para la caja de '+usuarioActual.usuario+'?'))return;
+  const registro={id:uid(),usuarioId:usuarioActual.id,usuario:usuarioActual.usuario,fecha:today(),creado:new Date().toISOString(),concepto,observaciones,valor:importe,etapaFirebase:'etapa8'};
+  const pendiente={uid:usuarioActual.id,registro};
+  localStorage.setItem(gmcClavePendienteGasto(),JSON.stringify(pendiente));gmcMostrarGastoPendiente();
+  await gmcEjecutarGastoOperativoFirebase(pendiente);
+ }catch(e){alert(e.message||mensajeFirebaseGMC(e));}
+};
+window.gmcReintentarGastoOperativoFirebase=async()=>{
+ const p=gmcPendienteGasto();if(!p)return alert('No existe un gasto pendiente de confirmación.');
+ try{await gmcEjecutarGastoOperativoFirebase(p);}catch(e){alert(e.message||mensajeFirebaseGMC(e));}
+};
+
+window.gmcDescartarGastoOperativoFirebase=async()=>{
+ const p=gmcPendienteGasto(),auth=firebaseAuthGMC.currentUser;
+ if(!p||!auth||p.uid!==auth.uid)return alert('No existe un gasto pendiente de esta sesión.');
+ if(!navigator.onLine)return alert('Necesita conexión para comprobar el gasto antes de descartarlo.');
+ if(gmcGastoEnCurso)return alert('La verificación de otro gasto sigue en curso.');
+ try{
+  const servidor=await getDocFromServer(doc(firestoreGMC,'gastosOperativosUsuarios',p.registro.id));
+  if(servidor.exists()){
+   const d=servidor.data();
+   if(d.usuarioId!==auth.uid||Number(d.valor)!==Number(p.registro.valor)||d.concepto!==p.registro.concepto)throw Error('Existe un documento con datos diferentes; requiere revisión.');
+   localStorage.removeItem(gmcClavePendienteGasto());gmcMostrarGastoPendiente();
+   return alert('El gasto ya estaba registrado en Firestore. Se liberó el pendiente sin duplicar el cargo.');
+  }
+  if(!confirm('Firestore confirma que el gasto NO existe. ¿Cancelar este intento sin registrarlo? Se conservará una copia local marcada como NO REGISTRADA.'))return;
+  db.gastosOperativosPendientesNoRegistrados=Array.isArray(db.gastosOperativosPendientesNoRegistrados)?db.gastosOperativosPendientesNoRegistrados:[];
+  if(!db.gastosOperativosPendientesNoRegistrados.some(x=>x.id===p.registro.id))db.gastosOperativosPendientesNoRegistrados.push({...p.registro,estado:'NO REGISTRADO EN FIRESTORE'});
+  try{localStorage.setItem(KEY,JSON.stringify(db))}catch(e){throw Error('No se pudo respaldar localmente el gasto descartado. '+e.message);}
+  localStorage.removeItem(gmcClavePendienteGasto());gmcMostrarGastoPendiente();
+  alert('Intento cancelado sin registrar ningún gasto. Se preservó una copia local separada.');
+ }catch(e){alert('No se descartó el pendiente: '+(e.message||mensajeFirebaseGMC(e)));}
+};
+
 function gmcExigirCierreFirebase(){
  if(!firebaseAuthGMC.currentUser||document.body.classList.contains('sesion-bloqueada'))throw Error('Inicie sesión con Firebase.');
- if(!navigator.onLine||!gmcCierresListos||!gmcVentasListas||!gmcAsignacionesListas||!gmcMasterListos.productos)throw Error('Espere la sincronización confirmada de cierres, ventas, productos y asignaciones. Se necesita conexión a Firestore.');
+ if(!navigator.onLine||!gmcCierresListos||!gmcVentasListas||!gmcAsignacionesListas||!gmcMasterListos.productos||!gmcGastosListos)throw Error('Espere la sincronización confirmada de cierres, ventas, inventario y gastos operativos en Firestore.');
+ if(gmcGastoEnCurso||gmcPendienteGasto())throw Error('Hay un gasto operativo pendiente de confirmar. Compruébelo antes de cerrar la caja.');
  if(gmcCierreEnCurso)throw Error('Ya se está confirmando un cierre de caja.');
  if(gmcPendienteCierre())throw Error('Hay un cierre pendiente. Utilice «Comprobar y reintentar el mismo cierre».');
  if(gmcPendienteVenta()||gmcPendienteAbono()||gmcVentaEnCurso||gmcAbonoEnCurso||gmcMovimientoEnCurso)throw Error('Existe una operación pendiente. Primero compruebe esa operación antes de cerrar la caja.');
@@ -4671,7 +4794,8 @@ function gmcResumenParaCerrar(fecha,usuario,usuarioId,tipo){
 async function gmcEjecutarCierreFirestore(pendiente){
  const auth=firebaseAuthGMC.currentUser;
  if(!auth||pendiente.operadorId!==auth.uid)throw Error('Este cierre pertenece a otra sesión Firebase.');
- if(!navigator.onLine||!gmcCierresListos||!gmcVentasListas||!gmcAsignacionesListas||!gmcMasterListos.productos)throw Error('Sin conexión confirmada a Firestore. Se conserva el cierre pendiente.');
+ if(!navigator.onLine||!gmcCierresListos||!gmcVentasListas||!gmcAsignacionesListas||!gmcMasterListos.productos||!gmcGastosListos)throw Error('Sin conexión confirmada a cierres y gastos operativos en Firestore. Se conserva el cierre pendiente.');
+ if(gmcGastoEnCurso||gmcPendienteGasto())throw Error('Hay un gasto operativo pendiente. Confírmelo antes de ejecutar el cierre de caja.');
  if(gmcCierreEnCurso)return;
  gmcCierreEnCurso=true;
  try{
