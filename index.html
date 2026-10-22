@@ -4612,7 +4612,7 @@ function gmcMostrarCierrePendiente(){
  for(const id of ['gmcCierrePendienteAdmin','gmcCierrePendienteVendedor']){
   const n=document.getElementById(id);if(!n)continue;
   n.style.display=pendiente?'':'none';
-  n.innerHTML=pendiente?'<strong>⚠️ Cierre pendiente de comprobación: '+esc(pendiente.fecha)+' · '+esc(pendiente.usuario)+'. No intente crear un segundo cierre.</strong><div class="actions" style="margin-top:8px"><button class="btn btn-warning" onclick="gmcReintentarCierreFirebase()">Comprobar y reintentar el mismo cierre</button><button class="btn btn-light" onclick="gmcDescartarCierreFirebase()">Descartar solo si no existe en Firestore</button></div>':'';
+  n.innerHTML=pendiente?'<strong>⚠️ Cierre pendiente de comprobación: '+esc(pendiente.fecha)+' · '+esc(pendiente.usuario)+'. No intente crear un segundo cierre.</strong><div class="actions" style="margin-top:8px"><button class="btn btn-primary" onclick="gmcDiagnosticarCierreFirebase()">Diagnosticar permisos (solo lectura)</button><button class="btn btn-warning" onclick="gmcReintentarCierreFirebase()">Comprobar y reintentar el mismo cierre</button><button class="btn btn-light" onclick="gmcDescartarCierreFirebase()">Descartar solo si no existe en Firestore</button></div>':'';
  }
 }
 function gmcDetenerCierresFirebase(){
@@ -4791,6 +4791,87 @@ window.gmcGenerarCierreFirebase=async()=>{
   await gmcEjecutarCierreFirestore(pendiente);
  }catch(e){alert(e.message||mensajeFirebaseGMC(e));}
 };
+
+// ETAPA 7 - Diagnóstico seguro: SOLO LECTURAS desde Firestore; no crea, actualiza ni elimina documentos.
+// Se informa únicamente del cierre pendiente y de los campos necesarios para validar la transacción.
+window.gmcDiagnosticarCierreFirebase=async()=>{
+ const pendiente=gmcPendienteCierre(),auth=firebaseAuthGMC.currentUser;
+ if(!pendiente||!auth||pendiente.operadorId!==auth.uid)return alert('Inicie sesión con la cuenta propietaria del cierre pendiente.');
+ if(!navigator.onLine)return alert('Necesita conexión con Firestore para efectuar el diagnóstico.');
+ const cierre=pendiente.cierre;
+ const informe={
+  diagnostico:'GMC Etapa 7 - SOLO LECTURA',fechaDiagnostico:new Date().toISOString(),
+  cierreId:cierre.id,fechaCierre:cierre.fecha,uidSesion:auth.uid,usuarioIdCierre:cierre.usuarioId,
+  tipo:cierre.tipo,documentoEsperado:cierre.usuarioId+'_'+cierre.fecha,
+  camposDelCierrePendiente:Object.keys(cierre).sort(),ventasCierre:cierre.ventas,efectivoEsperadoCierre:cierre.efectivoEsperado,
+  estadoUI:{cierresConectados:gmcCierresListos,productosConectados:gmcMasterListos.productos,asignacionesConectadas:gmcAsignacionesListas,ventasConectadas:gmcVentasListas},
+  perfil:null,cierreExistente:null,cierreGeneralExistente:null,asignaciones:[],productos:[],
+  comprobaciones:[],errores:[],sinEscrituras:true
+ };
+ const comprobar=(etiqueta,estado,detalle)=>informe.comprobaciones.push({etiqueta,correcto:!!estado,detalle:detalle??null});
+ const leer=async(nombre,referencia)=>{try{const docSnap=await getDocFromServer(referencia);return {existe:docSnap.exists(),datos:docSnap.exists()?docSnap.data():null};}
+ catch(error){informe.errores.push({documento:nombre,codigo:error.code||'',mensaje:error.message||String(error)});return null;}};
+ const perfil=await leer('perfiles/actual',doc(firestoreGMC,'perfiles',auth.uid));
+ if(perfil?.existe){
+  informe.perfil={rol:perfil.datos.rol,activo:perfil.datos.activo,permisoVentas:Array.isArray(perfil.datos.modulos)&&perfil.datos.modulos.includes('ventas')};
+  comprobar('Perfil vendedor autorizado',perfil.datos.activo===true&&perfil.datos.rol==='vendedor'&&informe.perfil.permisoVentas);
+ }
+ const existente=await leer('cierresCaja/'+cierre.id,doc(firestoreGMC,'cierresCaja',cierre.id));
+ informe.cierreExistente=existente?.existe??null;
+ const general=await leer('cierresCaja/general_'+cierre.fecha,doc(firestoreGMC,'cierresCaja','general_'+cierre.fecha));
+ informe.cierreGeneralExistente=general?.existe??null;
+ comprobar('ID de cierre por usuario y fecha',cierre.id===informe.documentoEsperado);
+ comprobar('Cierre todavía no confirmado',existente?.existe===false);
+ comprobar('Cierre general todavía no confirmado',general?.existe===false);
+ comprobar('Operador coincide con sesión',pendiente.operadorId===auth.uid);
+ comprobar('Fecha del cierre en el día de hoy',pendiente.fecha===today());
+ const locales=(db.stockUsuarios||[]).filter(a=>a.usuarioId===cierre.usuarioId&&a.estado==='abierta');
+ comprobar('Máximo ocho asignaciones abiertas',locales.length<=8,locales.length);
+ const totales=new Map();
+ for(const a of locales){
+  const remoto=await leer('stockUsuarios/'+a.id,doc(firestoreGMC,'stockUsuarios',a.id));
+  const d=remoto?.datos;
+  if(!d){informe.asignaciones.push({id:a.id,existe:remoto?.existe??null});continue;}
+  const resto=Number(d.restante),cantidad=Number(d.cantidad);
+  informe.asignaciones.push({id:a.id,productoId:d.productoId,usuarioId:d.usuarioId,estado:d.estado,
+   cantidad,restante:resto,camposPresentes:Object.keys(d).sort(),
+   cierrePropuesto:{estado:'cerrada',restante:0,devuelto:resto,fechaCierre:cierre.fecha,ultimoCierreId:cierre.id},
+   localCoincideConServidor:Number(a.restante)===resto});
+  comprobar('Asignación abierta del vendedor '+a.id,d.estado==='abierta'&&d.usuarioId===cierre.usuarioId&&Number.isFinite(resto)&&resto>=0&&resto<=cantidad);
+  if(resto>0)totales.set(d.productoId,(totales.get(d.productoId)||0)+resto);
+ }
+ for(const [pid,cantidad] of totales){
+  const remoto=await leer('productos/'+pid,doc(firestoreGMC,'productos',pid));
+  const d=remoto?.datos;
+  if(!d){informe.productos.push({id:pid,existe:remoto?.existe??null});continue;}
+  const actual=Number(d.stock),asignadas=Number(d.unidadesAsignadas||0);
+  informe.productos.push({id:pid,stock:actual,unidadesAsignadas:asignadas,devolucionPropuesta:cantidad,
+    stockPosterior:Math.round((actual+cantidad)*1e6)/1e6,
+    asignadasPosteriores:Math.round((asignadas-cantidad)*1e6)/1e6,
+    camposPresentes:Object.keys(d).sort(),ultimoCierreActual:d.ultimoCierreId||null});
+  comprobar('Stock suficiente para devolver '+pid,Number.isFinite(actual)&&Number.isFinite(asignadas)&&asignadas+0.000001>=cantidad);
+ }
+ const identificadores=new Set(informe.asignaciones.map(a=>a.id));
+ comprobar('Asignaciones sin IDs repetidos',identificadores.size===informe.asignaciones.length);
+ comprobar('El cierre contiene devolución de unidades',informe.productos.some(p=>p.devolucionPropuesta>0));
+ informe.conclusion=informe.errores.length?'Algunos documentos no pudieron consultarse. Revisar errores de lectura.':
+   informe.comprobaciones.some(c=>!c.correcto)?'Hay al menos una incompatibilidad de datos detectable antes del cierre.':'Los datos leídos son coherentes; la denegación podría estar en las reglas de escritura, que requieren una prueba en el emulador.';
+ const json=JSON.stringify(informe,null,2);
+ openModal('Diagnóstico de cierre · Sin modificaciones',
+  '<p class="note">Se consultaron documentos del servidor sin realizar ningún cobro, cierre ni modificación de inventario. Descargue este informe y compártalo para localizar el bloqueo.</p>'+ 
+  '<p><strong>'+esc(informe.conclusion)+'</strong></p>'+ 
+  '<div class="actions"><button class="btn btn-primary" onclick="gmcDescargarDiagnosticoCierre()">Descargar diagnóstico JSON</button></div>'+ 
+  '<textarea id="gmcDiagnosticoCierreTexto" readonly style="min-height:240px;white-space:pre;font-family:monospace;font-size:12px">'+esc(json)+'</textarea>');
+ window.gmcUltimoDiagnosticoCierre=json;
+};
+window.gmcDescargarDiagnosticoCierre=()=>{
+ if(!window.gmcUltimoDiagnosticoCierre)return;
+ const blob=new Blob([window.gmcUltimoDiagnosticoCierre],{type:'application/json;charset=utf-8'});
+ const url=URL.createObjectURL(blob),link=document.createElement('a');
+ link.href=url;link.download='DIAGNOSTICO_CIERRE_GMC_ETAPA7.json';document.body.appendChild(link);link.click();link.remove();
+ setTimeout(()=>URL.revokeObjectURL(url),1000);
+};
+
 window.gmcReintentarCierreFirebase=async()=>{
  const p=gmcPendienteCierre();if(!p)return alert('No hay cierre pendiente.');
  try{await gmcEjecutarCierreFirestore(p);}catch(e){alert('El cierre sigue pendiente. '+(e.message||mensajeFirebaseGMC(e)));}
