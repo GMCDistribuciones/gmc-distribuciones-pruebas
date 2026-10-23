@@ -441,6 +441,28 @@
         </div>
         <p class="note"><strong>Seguridad:</strong> la comparación puede facturar lecturas de Firestore. No es una instantánea transaccional; evite operaciones durante la comparación. Una coincidencia no significa que el respaldo pueda restaurarse con «Restaurar respaldo anterior»: esa opción sigue siendo exclusivamente local.</p>
       </div>
+      <!-- ETAPA 16: Recuperación excepcional de fichas NO contables AUSENTES. No sobrescribe documentos. -->
+      <div class="card" id="gmc16Tarjeta" style="margin-top:14px">
+        <h3>🛡️ Recuperación selectiva y controlada (Etapa 16)</h3>
+        <p class="note"><strong>Alcance restringido:</strong> solamente puede recrear fichas <strong>faltantes</strong> de <strong>Proveedores</strong> y <strong>Metas y Cumplimiento</strong> desde un respaldo validado en la Etapa 15. No restaura ni modifica ventas, compras, inventario, perfiles, cuentas, cierres ni documentos ya existentes. Cada documento recuperado empieza en revisión 1 y recibe nueva fecha y autor de registro para cumplir las reglas actuales.</p>
+        <p class="note"><strong>Protección:</strong> exige el SHA-256 original del respaldo, comparación previa sin documentos modificados, selección explícita, reautenticación con contraseña de Firebase del administrador y transacción atómica (máximo cuatro fichas). Si algún documento ya existe o cambió el contador de facturas, no se escribe nada.</p>
+        <div class="actions" style="gap:8px;flex-wrap:wrap">
+          <button type="button" class="btn btn-light" onclick="gmc16PrepararPlan()">1. Buscar fichas faltantes (solo lectura)</button>
+          <button type="button" class="btn btn-light" id="gmc16BotonActa" disabled onclick="gmc16DescargarActa()">Descargar acta de recuperación</button>
+        </div>
+        <p class="note" id="gmc16Estado" aria-live="polite">Primero valide el archivo JSON y compárelo con Firestore en la Etapa 15, introduciendo su SHA-256 original.</p>
+        <div id="gmc16Candidatos" style="margin:10px 0"></div>
+        <div id="gmc16Confirmacion" style="display:none" class="grid g2">
+          <label>Confirmación exacta de la operación
+            <input id="gmc16Frase" autocomplete="off" spellcheck="false" placeholder="Escriba RECUPERAR">
+          </label>
+          <label>Contraseña actual de Firebase del administrador (no se guarda)
+            <input id="gmc16Contrasena" type="password" autocomplete="current-password" placeholder="Contraseña de Firebase">
+          </label>
+          <div style="grid-column:1 / -1"><button type="button" class="btn btn-danger" id="gmc16BotonEjecutar" onclick="gmc16Ejecutar()">2. Recuperar SOLO las fichas seleccionadas</button></div>
+        </div>
+        <p class="note"><strong>Limitación:</strong> esta etapa no permite restaurar la base completa ni recuperar las cuentas de Firebase Authentication. Si necesita recuperar registros contables o inventario, debe utilizarse un procedimiento distinto de reconstrucción y conciliación. Conserve el JSON original y el acta.</p>
+      </div>
       <div class="card" style="margin-top:14px">
         <h3>Configuración general del negocio</h3>
         <p id="gmcConfigEstado" class="note" aria-live="polite">Etapa 13: esperando la conexión de Configuración con Cloud Firestore…</p>
@@ -6217,6 +6239,163 @@ window.gmc15DescargarInforme=()=>{
  if(!gmc15Informe)return alert('Primero complete la comparación con Firestore.');
  try{gmc15Sesion();}catch(e){return alert(e.message);}
  download('GMC_INFORME_ETAPA15_'+new Date().toISOString().replace(/[:.]/g,'-')+'.json',JSON.stringify(gmc15Informe,null,2),'application/json;charset=utf-8');
+};
+
+
+// GMC DISTRIBUCIONES — ETAPA 16: recuperaciones exclusivas de fichas administrativas AUSENTES.
+// No altera datos contables ni modifica reglas de Firestore.
+// GMC DISTRIBUCIONES — ETAPA 16.
+// Recuperación NO destructiva de fichas administrativas AUSENTES; sin importes de caja o stock.
+// Funciones puras y verificables: NO llaman Firebase y no contienen operaciones de escritura.
+const GMC16_COLECCIONES=Object.freeze(['proveedores','metasCumplimiento']);
+const GMC16_MAXIMO=4;
+const mapa=x=>x!==null&&typeof x==='object'&&!Array.isArray(x);
+const cadena=(v,n=200)=>typeof v==='string'&&v.length<=n;
+function gmc16Normalizar(coleccion,fila,admin,marca){
+ if(!GMC16_COLECCIONES.includes(coleccion))throw Error('La colección no está autorizada para recuperar documentos.');
+ if(!mapa(fila)||typeof fila.id!=='string'||!fila.id||fila.id.includes('/')||fila.id==='.'||fila.id==='..'||!mapa(fila.datos))throw Error('Documento de respaldo inválido.');
+ if(typeof admin!=='string'||!admin)throw Error('Falta identidad del administrador.');
+ const d=fila.datos;
+ if(d.id!==fila.id)throw Error('ID no coincide con la ficha guardada.');
+ if(coleccion==='proveedores'){
+  if(d.etapaFirebase!=='etapa11'||!cadena(d.identificacion,150)||!cadena(d.nombre,180)||!d.nombre.trim()||!cadena(d.telefono,150)||!cadena(d.email,150)||!cadena(d.direccion,300))throw Error('Proveedor no cumple el esquema autorizado.');
+  return {id:fila.id,identificacion:d.identificacion,nombre:d.nombre,telefono:d.telefono,email:d.email,direccion:d.direccion,
+   etapaFirebase:'etapa11',revision:1,operadorId:admin,creadoServidor:marca,actualizadoPor:admin,actualizadoServidor:marca};
+ }
+ if(d.etapaFirebase!=='etapa10'||!['semanal','mensual'].includes(d.tipo)||!cadena(d.fecha,10)||!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(d.fecha)||
+ !cadena(d.usuarioId,128)||!cadena(d.usuarioNombre,120)||!d.usuarioNombre.trim()||!cadena(d.ruta,64)||
+ ![d.unidades,d.monto].every(n=>typeof n==='number'&&Number.isFinite(n)&&n>=0&&n<=100000000))throw Error('Meta no cumple el esquema autorizado.');
+ return {id:fila.id,tipo:d.tipo,fecha:d.fecha,usuarioId:d.usuarioId,usuarioNombre:d.usuarioNombre,ruta:d.ruta,unidades:d.unidades,monto:d.monto,
+  etapaFirebase:'etapa10',revision:1,operadorId:admin,creadoServidor:marca,actualizadoPor:admin,actualizadoServidor:marca};
+}
+function gmc16Planificar(respaldo,existentes,admin){
+ if(!mapa(respaldo)||!mapa(respaldo.colecciones))throw Error('Respaldo sin colecciones.');
+ const permitidos=[],excluidos=[];
+ for(const coleccion of GMC16_COLECCIONES){
+  const filas=respaldo.colecciones[coleccion],actuales=existentes[coleccion];
+  if(!Array.isArray(filas)||!Array.isArray(actuales))throw Error('Lectura de '+coleccion+' incompleta.');
+  const vivos=new Map(actuales.map(f=>[f.id,f.datos]));
+  for(const fila of filas){
+   try{gmc16Normalizar(coleccion,fila,admin,'pendiente');}
+   catch(e){excluidos.push({coleccion,id:fila?.id||'',razon:e.message});continue;}
+   if(vivos.has(fila.id)){excluidos.push({coleccion,id:fila.id,razon:'Ya existe en Firestore; no se sobrescribirá.'});continue;}
+   permitidos.push({coleccion,id:fila.id,datos:fila.datos,descripcion:coleccion==='proveedores'?fila.datos.nombre:('Meta '+fila.datos.tipo+' · '+fila.datos.usuarioNombre+' · '+fila.datos.fecha)});
+  }
+ }
+ return {permitidos,excluidos};
+}
+function gmc16ValidarSeleccion(plan,claves){
+ if(!plan||!Array.isArray(plan.permitidos)||!Array.isArray(claves)||claves.length<1||claves.length>GMC16_MAXIMO||new Set(claves).size!==claves.length)throw Error('Seleccione de uno a cuatro documentos diferentes.');
+ const mapaPlan=new Map(plan.permitidos.map(v=>[v.coleccion+'/'+v.id,v]));
+ return claves.map(k=>{const fila=mapaPlan.get(k);if(!fila)throw Error('Documento no autorizado en el plan: '+k);return fila;});
+}
+
+let gmc16PlanActual=null,gmc16UltimaActa=null,gmc16Procesando=false;
+function gmc16Estado(mensaje){
+ const el=document.getElementById('gmc16Estado');if(el)el.textContent=mensaje;
+ const b=document.getElementById('gmc16BotonEjecutar');if(b)b.disabled=gmc16Procesando;
+ const acta=document.getElementById('gmc16BotonActa');if(acta)acta.disabled=!gmc16UltimaActa;
+}
+function gmc16LimpiarPlan(){
+ gmc16PlanActual=null;
+ const listado=document.getElementById('gmc16Candidatos');if(listado)listado.replaceChildren();
+ const panel=document.getElementById('gmc16Confirmacion');if(panel)panel.style.display='none';
+ const clave=document.getElementById('gmc16Contrasena');if(clave)clave.value='';
+ const frase=document.getElementById('gmc16Frase');if(frase)frase.value='';
+}
+function gmc16ExigirValidacion(){
+ const uid=gmc15Sesion();
+ if(!gmc15ArchivoValidado||!gmc15Informe)throw Error('Primero valide el JSON y complete «Comparar con Firestore» en la Etapa 15.');
+ const esperado=(document.getElementById('gmc15HashEsperado')?.value||'').trim().toLowerCase();
+ if(!/^[a-f0-9]{64}$/.test(esperado)||esperado!==gmc15ArchivoValidado.hash)throw Error('Antes de recuperar debe ingresar el SHA-256 ORIGINAL de la Etapa 14 y comprobar que coincida. No basta con el SHA calculado ahora.');
+ if(gmc15Informe.sha256Archivo!==gmc15ArchivoValidado.hash||gmc15ArchivoValidado.resumen.proyecto!==firestoreGMC.app.options.projectId)throw Error('El informe no pertenece al respaldo o proyecto elegido.');
+ if(gmc15Informe.totales.cambiados!==0)throw Error('Hay documentos modificados desde el respaldo. La recuperación se bloquea hasta una conciliación individual.');
+ if(gmc15ArchivoValidado.contenido.origen.usuarioId!==uid)throw Error('La cuenta administradora no coincide con el respaldo.');
+ return uid;
+}
+window.gmc16PrepararPlan=async()=>{
+ if(gmc16Procesando)return;
+ let uid;try{uid=gmc16ExigirValidacion();}catch(e){gmc16LimpiarPlan();return gmc16Estado('NO AUTORIZADO: '+e.message);}
+ if(!confirm('Se revisarán desde Firestore los proveedores y las metas faltantes. No se escribirá ningún documento. ¿Preparar el plan?'))return;
+ gmc16Procesando=true;gmc16LimpiarPlan();gmc16Estado('Leyendo documentos actuales y preparando la lista de faltantes…');
+ try{
+  const existentes={};
+  for(const k of GMC16_COLECCIONES)existentes[k]=await gmcRespaldo14LeerColeccion(k,uid);
+  const contador=await gmcRespaldo14LeerUnico('contadores','ventas',uid);
+  const plan=gmc16Planificar(gmc15ArchivoValidado.contenido,existentes,uid);
+  gmc15Sesion();
+  if(plan.permitidos.length>100)throw Error('Se detectaron más de 100 fichas ausentes. Se requiere una revisión administrativa individual; no se habilita una recuperación masiva.');
+  gmc16PlanActual={uid,hash:gmc15ArchivoValidado.hash,plan,contador};
+  const lista=document.getElementById('gmc16Candidatos');
+  if(lista){
+   lista.replaceChildren();
+   for(let i=0;i<plan.permitidos.length;i++){
+    const p=plan.permitidos[i],et=document.createElement('label');et.style.cssText='display:block;padding:8px;border-bottom:1px solid #ddd;';
+    const ch=document.createElement('input');ch.type='checkbox';ch.dataset.gmc16Indice=String(i);ch.style.marginRight='8px';
+    et.append(ch,document.createTextNode((p.coleccion==='proveedores'?'Proveedor':'Meta')+' · '+p.descripcion+' · ID '+p.id));lista.append(et);
+   }
+  }
+  const panel=document.getElementById('gmc16Confirmacion');if(panel)panel.style.display=plan.permitidos.length?'':'none';
+  gmc16Estado('PLAN SIN ESCRITURAS: '+plan.permitidos.length+' ficha(s) ausente(s) elegibles y '+plan.excluidos.length+' ficha(s) omitida(s). '+
+     (plan.permitidos.length?'Seleccione de una a cuatro fichas. Ninguna está marcada inicialmente.':'No hay fichas pendientes de recuperar; no haga cambios.'));
+ }catch(e){gmc16LimpiarPlan();gmc16Estado('PLAN CANCELADO: '+(e.message||String(e))+' No se realizó ninguna escritura.');}
+ finally{gmc16Procesando=false;gmc16Estado(document.getElementById('gmc16Estado')?.textContent||'');}
+};
+window.gmc16Ejecutar=async()=>{
+ if(gmc16Procesando||!gmc16PlanActual)return;
+ let uid;try{uid=gmc16ExigirValidacion();}catch(e){gmc16LimpiarPlan();return gmc16Estado('BLOQUEADO: '+e.message);}
+ const plan=gmc16PlanActual;
+ if(uid!==plan.uid||plan.hash!==gmc15ArchivoValidado.hash)return gmc16Estado('PLAN CADUCADO: el administrador o archivo cambió. Vuelva a preparar el plan.');
+ const checks=[...document.querySelectorAll('input[data-gmc16-indice]:checked')];
+ let seleccion;try{seleccion=gmc16ValidarSeleccion(plan.plan,checks.map(ch=>{const p=plan.plan.permitidos[Number(ch.dataset.gmc16Indice)];return p.coleccion+'/'+p.id;}));}
+ catch(e){return gmc16Estado('SELECCIÓN NO VÁLIDA: '+e.message);}
+ if(document.getElementById('gmc16Frase')?.value?.trim()!=='RECUPERAR')return gmc16Estado('Escriba exactamente RECUPERAR como confirmación explícita.');
+ const claveInput=document.getElementById('gmc16Contrasena');
+ const password=claveInput?.value||'';
+ if(claveInput)claveInput.value='';
+ if(!password)return gmc16Estado('Introduzca la contraseña actual de Firebase del administrador.');
+ if(!confirm('ÚLTIMA CONFIRMACIÓN: se crearán '+seleccion.length+' ficha(s) administrativas AUSENTES, con las mismas IDs. No se modificará stock ni se sobrescribirá nada. ¿Autoriza esta recuperación excepcional?'))return;
+ gmc16Procesando=true;gmc16Estado('Reautenticando al administrador con Firebase…');
+ const claves=seleccion.map(x=>x.coleccion+'/'+x.id);
+ try{
+  const authUser=firebaseAuthGMC.currentUser;
+  if(!authUser?.email||authUser.uid!==uid)throw Error('No existe sesión de Firebase válida del administrador.');
+  await reauthenticateWithCredential(authUser,EmailAuthProvider.credential(authUser.email,password));
+  if(gmc15Sesion()!==uid)throw Error('La sesión cambió tras reautenticarse.');
+  gmc16Estado('Comprobando identidades y el estado del servidor en una sola transacción…');
+  const creado=await runTransaction(firestoreGMC,async tx=>{
+   if(gmc15Sesion()!==uid)throw Error('Sesión del administrador cambiada.');
+   const refContador=doc(firestoreGMC,'contadores','ventas');
+   const actualContador=await tx.get(refContador);
+   const normal=actualContador.exists()?{id:'ventas',datos:gmcRespaldo14Normalizar(actualContador.data())}:null;
+   if(gmc15Canonico(normal)!==gmc15Canonico(plan.contador))throw Error('Cambió el contador de ventas. Se cancela para evitar recuperar durante movimientos del negocio.');
+   const referencias=seleccion.map(f=>doc(firestoreGMC,f.coleccion,f.id));
+   const snaps=[];for(const r of referencias)snaps.push(await tx.get(r));
+   if(snaps.some(s=>s.exists()))throw Error('Una ficha seleccionada ya existe en Firestore. NO se sobrescribió ningún documento. Prepare otro plan.');
+   for(let i=0;i<seleccion.length;i++)tx.set(referencias[i],gmc16Normalizar(seleccion[i].coleccion,seleccion[i],uid,serverTimestamp()));
+   return seleccion.length;
+  });
+  // Releer del servidor para evitar declarar éxito si hay problema posterior a la confirmación.
+  for(const r of seleccion){
+   const encontrado=await gmcRespaldo14LeerUnico(r.coleccion,r.id,uid);
+   if(!encontrado)throw Error('La transacción pudo registrarse, pero faltó confirmar '+r.coleccion+'/'+r.id+' en una nueva lectura. NO repita la operación sin comprobar el servidor.');
+  }
+  gmc16UltimaActa={tipo:'gmc_etapa16_acta_recuperacion_v1',proyecto:firestoreGMC.app.options.projectId,
+   administradorUid:uid,fechaUTC:new Date().toISOString(),sha256Respaldo:plan.hash,creados:claves,
+   cantidad:creado,modo:'CREACION EXCLUSIVA DE DOCUMENTOS AUSENTES; SIN SOBRESCRITURA',
+   advertencias:['Los metadatos de creación y revisión se reiniciaron conforme a las reglas del servidor.',
+    'No se restablecieron documentos contables ni registros de Firebase Authentication.']};
+  gmc16LimpiarPlan();
+  gmc16Estado('RECUPERACIÓN CONFIRMADA POR FIRESTORE: '+creado+' ficha(s) creadas; ningún documento existente sobrescrito. Descargue el acta de la operación.');
+ }catch(e){
+  gmc16LimpiarPlan();
+  gmc16Estado('OPERACIÓN NO CONFIRMADA: '+(e.message||String(e))+'. Compruebe el servidor con un nuevo plan; NO reintente automáticamente ni importe otra vez el archivo.');
+ }finally{gmc16Procesando=false;gmc16Estado(document.getElementById('gmc16Estado')?.textContent||'');}
+};
+window.gmc16DescargarActa=()=>{
+ if(!gmc16UltimaActa)return;
+ try{gmc15Sesion();}catch(e){return alert(e.message);}
+ download('GMC_ACTA_RECUPERACION_ETAPA16_'+new Date().toISOString().replace(/[:.]/g,'-')+'.json',JSON.stringify(gmc16UltimaActa,null,2),'application/json;charset=utf-8');
 };
 
 </script>
