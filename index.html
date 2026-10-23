@@ -604,6 +604,9 @@
     <section id="proveedores" class="section">
       <div class="card">
         <div class="actions" style="justify-content:space-between"><h3>Proveedores</h3><button class="btn btn-primary" onclick="modalPersona('proveedor')">+ Proveedor</button></div>
+        <p class="note" id="gmcProveedoresEstado" aria-live="polite">Proveedores: esperando conexión con Cloud Firestore. No registre cambios todavía.</p>
+        <div id="gmcProveedoresMigracion" class="note" style="display:none;margin:10px 0"><strong>Respaldo local anterior:</strong> <span id="gmcProveedoresMigracionTexto"></span> <button type="button" class="btn btn-light" onclick="gmcMigrarProveedoresLocalesFirebase()">Migrar proveedores locales a Firestore</button><p>La migración es voluntaria, conserva el respaldo y solo está disponible si la colección remota está vacía.</p></div>
+        <div class="actions" style="margin:7px 0"><button class="btn btn-light" type="button" onclick="gmcReintentarProveedorFirebase()">Comprobar operación pendiente</button></div>
         <div class="table-wrap"><table><thead><tr><th>RUC / CI</th><th>Proveedor</th><th>Teléfono</th><th>Email</th><th>Dirección</th><th></th></tr></thead><tbody id="tbProveedores"></tbody></table></div>
       </div>
     </section>
@@ -1028,7 +1031,7 @@ document.querySelectorAll('.nav-btn').forEach(b=>b.onclick=()=>go(b.dataset.sec)
 function openModal(title,html){devolverFormularioAsignacionLote();document.getElementById('modalTitle').textContent=title;document.getElementById('modalBody').innerHTML=html;document.getElementById('modal').classList.add('show')}
 function cerrarModal(){if(document.body.classList.contains('sesion-bloqueada'))return;window.gmcSalirAutorizacionClienteFirebase?.();devolverFormularioAsignacionLote();edicionAdministradorIdentificada=false;solicitudClientePendiente=null;autorizacionClienteEdicion='';document.getElementById('modal').classList.remove('show')}
 function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
-function deleteBy(tipo,id){if(tipo==='clientes'||tipo==='productos')return window.gmcEliminarMaestroFirebase(tipo,id);if(tipo==='gastos')return solicitarEliminarGastoAdmin(id);if(tipo==='clientes'&&usuarioActual&&!adminAutenticado){if(autorizacionClienteBorrado!==String(id))return solicitarClaveAdministradorCliente('borrar',id);autorizacionClienteBorrado='';}if(tipo==='productos'&&((db.stockUsuarios||[]).some(a=>a.productoId===id&&a.estado==='abierta'&&a.restante>0)||Number(registro.unidadesAsignadas||0)>0))return alert('Este producto tiene existencias asignadas en Firestore. No puede eliminarlo hasta que regresen al inventario central.');if(!confirm('¿Eliminar este registro?'))return;audit('ELIMINAR',tipo+' '+id);db[tipo]=db[tipo].filter(x=>x.id!==id);save()}
+function deleteBy(tipo,id){if(tipo==='proveedores')return window.gmcEliminarProveedorFirebase(id);if(tipo==='clientes'||tipo==='productos')return window.gmcEliminarMaestroFirebase(tipo,id);if(tipo==='gastos')return solicitarEliminarGastoAdmin(id);if(tipo==='clientes'&&usuarioActual&&!adminAutenticado){if(autorizacionClienteBorrado!==String(id))return solicitarClaveAdministradorCliente('borrar',id);autorizacionClienteBorrado='';}if(tipo==='productos'&&((db.stockUsuarios||[]).some(a=>a.productoId===id&&a.estado==='abierta'&&a.restante>0)||Number(registro.unidadesAsignadas||0)>0))return alert('Este producto tiene existencias asignadas en Firestore. No puede eliminarlo hasta que regresen al inventario central.');if(!confirm('¿Eliminar este registro?'))return;audit('ELIMINAR',tipo+' '+id);db[tipo]=db[tipo].filter(x=>x.id!==id);save()}
 
 function siguienteCodigoProducto(){
   const usados=new Set(db.productos.map(x=>String(x.codigo||'').trim()));
@@ -1516,7 +1519,15 @@ async function guardarPersona(tipo,id){
   finally{if(boton?.isConnected)boton.disabled=false;}
   return;
  }
- let k=tipo==='cliente'?'clientes':'proveedores';if(id)db[k]=db[k].map(x=>x.id===id?o:x);else db[k].push(o);save();cerrarModal()
+ if(tipo==='proveedor'){
+  const boton=document.querySelector('#modalBody button[onclick^="guardarPersona"]');
+  if(boton?.disabled)return;
+  if(boton)boton.disabled=true;
+  try{await window.gmcGuardarProveedorFirebase(o,id);cerrarModal();}
+  catch(e){alert(e?.message||'No se pudo guardar el proveedor en Firestore.');}
+  finally{if(boton?.isConnected)boton.disabled=false;}
+  return;
+ }
 }
 function renderPersonas(){
  tbClientes.innerHTML=db.clientes.map(p=>`<tr><td>${esc(p.identificacion)}</td><td>${esc(p.nombreCliente??(p.razonSocial?'':p.nombre||''))}</td><td>${esc(p.razonSocial||'')}</td><td>${esc(p.ruta||'')}</td><td>${esc(p.diaVisita||'')}</td><td>${esc(p.telefono)}</td><td>${esc(p.email)}</td><td>${esc(p.direccion)}</td><td><div class="actions" style="flex-wrap:nowrap;gap:5px"><button class="btn btn-light" style="padding:7px 9px" title="Editar" aria-label="Editar cliente" onclick='modalPersona("cliente",${JSON.stringify(p)})'>✏️</button><button class="btn btn-light danger" style="padding:7px 9px" title="Borrar" aria-label="Borrar cliente" onclick="deleteBy('clientes','${p.id}')">🗑️</button></div></td></tr>`).join('')||`<tr><td colspan="9" class="empty">Sin clientes</td></tr>`;
@@ -3953,8 +3964,8 @@ onAuthStateChanged(firebaseAuthGMC,user=>{
   if(gmcEfectuandoSalida||inicioPendienteGMC)return;
   if(!user&&!document.body.classList.contains('sesion-bloqueada'))bloquearFirebaseGMC();
 });
-// ETAPA 3 - Solo fichas maestras de PRODUCTOS y CLIENTES en Cloud Firestore.
-// Ventas, stock consumido, compras, abonos, cheques y caja continúan LOCALES.
+// ETAPA 3 - Productos y Clientes conectados a Cloud Firestore.
+// ETAPA 11 - Proveedores conectados; compras permanecen locales.
 let gmcMasterSesion='';
 let gmcMasterUnsubs=[];
 let gmcMasterListos={productos:false,clientes:false};
@@ -3973,6 +3984,7 @@ const gmcMaestroEstado=(tipo,texto)=>{
  if(nodo)nodo.textContent=texto;
 };
 function gmcDetenerMaestrosFirebase(){
+ gmcDetenerProveedoresFirebase();
  gmcDetenerMetasFirebase();
  gmcDetenerCajaBancosFirebase();
  gmcDetenerGastosFirebase();
@@ -3995,6 +4007,7 @@ function gmcDetenerMaestrosFirebase(){
 function gmcSuscribirMaestrosFirebase(uidSesion){
  gmcDetenerMaestrosFirebase();
  gmcMasterSesion=uidSesion;
+ gmcSuscribirProveedoresFirebase(uidSesion);
  gmcSuscribirMetasFirebase(uidSesion);
  gmcSuscribirCajaBancosFirebase(uidSesion);
  gmcSuscribirAsignacionesFirebase(uidSesion);
@@ -5046,6 +5059,159 @@ const gmcBancoLegacyInicial={cuentasBancarias:structuredClone(db.cuentasBancaria
 
 // GMC DISTRIBUCIONES - ETAPA 10: metas y cumplimiento, solo administrador.
 // Ningún movimiento de ventas/inventario/caja se realiza en este módulo.
+// ETAPA 11 - Proveedores: catálogo compartido por administrador; compras aún locales.
+// Conservar el historial local original antes de sobrescribir la vista con Firestore.
+const gmcProveedoresRespaldoClave='gmc_etapa11_proveedores_locales_originales';
+try{
+ if(!localStorage.getItem(gmcProveedoresRespaldoClave) && Array.isArray(db.proveedores) && db.proveedores.length){
+  localStorage.setItem(gmcProveedoresRespaldoClave,JSON.stringify(db.proveedores));
+ }
+}catch(e){console.warn('No se pudo guardar el respaldo anterior de proveedores',e)}
+let gmcProvUnsub=null,gmcProvSesion='',gmcProvOcupado=false;
+window.gmcProveedoresListos=false;
+const gmcProvPendienteClave=()=> 'gmc_etapa11_proveedor_pendiente_'+(firebaseAuthGMC.currentUser?.uid||'sin_sesion');
+function gmcProvEstado(t){const n=document.getElementById('gmcProveedoresEstado');if(n)n.textContent=t;}
+function gmcProvRespaldo(){try{const a=JSON.parse(localStorage.getItem(gmcProveedoresRespaldoClave)||'[]');return Array.isArray(a)?a:[]}catch{return []}}
+function gmcProvDatos(x){return {identificacion:String(x.identificacion||'').trim(),nombre:String(x.nombre||'').trim(),telefono:String(x.telefono||'').trim(),email:String(x.email||'').trim(),direccion:String(x.direccion||'').trim()}}
+function gmcProvCamposIguales(a,b){return ['identificacion','nombre','telefono','email','direccion'].every(k=>String(a?.[k]||'')===String(b?.[k]||''))}
+function gmcProvValidarDatos(d){
+ if(!d.nombre||d.nombre.length>180)throw Error('Ingrese el proveedor o razón social (máximo 180 caracteres).');
+ for(const k of ['identificacion','telefono','email','direccion'])if(d[k].length> (k==='direccion'?300:150))throw Error('El campo '+k+' es demasiado largo.');
+}
+function gmcProvVerificar(){
+ if(!firebaseAuthGMC.currentUser||firebaseRolGMC!=='admin'||!adminAutenticado||document.body.classList.contains('sesion-bloqueada'))throw Error('Solo el administrador Firebase puede modificar proveedores.');
+ if(!window.gmcProveedoresListos||!navigator.onLine)throw Error('Espere la confirmación de Proveedores con Firestore.');
+ if(gmcProvOcupado)throw Error('Ya hay una operación de proveedores en curso.');
+}
+function gmcProvMigracionEstado(){
+ const panel=document.getElementById('gmcProveedoresMigracion'),txt=document.getElementById('gmcProveedoresMigracionTexto');
+ if(!panel||!txt)return;
+ const lista=gmcProvRespaldo();
+ const disponible=adminAutenticado&&firebaseRolGMC==='admin'&&window.gmcProveedoresListos&&db.proveedores.length===0&&lista.length>0;
+ panel.style.display=disponible?'':'none';
+ txt.textContent=disponible?lista.length+' proveedor(es) locales anteriores.':'';
+}
+function gmcDetenerProveedoresFirebase(){
+ if(gmcProvUnsub){try{gmcProvUnsub()}catch{}gmcProvUnsub=null;}
+ gmcProvSesion='';window.gmcProveedoresListos=false;gmcProvOcupado=false;db.proveedores=[];
+ gmcProvEstado('Proveedores: inicie sesión como administrador.');gmcProvMigracionEstado();
+}
+function gmcSuscribirProveedoresFirebase(uidSesion){
+ if(gmcProvUnsub){try{gmcProvUnsub()}catch{}gmcProvUnsub=null;}
+ gmcProvSesion=uidSesion;window.gmcProveedoresListos=false;db.proveedores=[];
+ if(firebaseRolGMC!=='admin'){
+  gmcProvEstado('Proveedores: acceso exclusivo del administrador.');renderPersonas();return;
+ }
+ gmcProvEstado('Proveedores: conectando con Cloud Firestore…');
+ gmcProvUnsub=onSnapshot(collection(firestoreGMC,'proveedores'),{includeMetadataChanges:true},snap=>{
+  if(gmcProvSesion!==uidSesion||firebaseAuthGMC.currentUser?.uid!==uidSesion)return;
+  window.gmcProveedoresListos=!snap.metadata.fromCache&&!snap.metadata.hasPendingWrites;
+  db.proveedores=snap.docs.map(d=>({...d.data(),id:d.id})).sort((a,b)=>String(a.nombre||'').localeCompare(String(b.nombre||''),'es'));
+  gmcProvEstado(window.gmcProveedoresListos?'Proveedores conectados a Cloud Firestore · '+db.proveedores.length+' registro(s).':'Proveedores: esperando confirmación del servidor; no registre modificaciones.');
+  gmcProvMigracionEstado();renderPersonas();
+  try{localStorage.setItem(KEY,JSON.stringify(db))}catch(e){console.warn('Respaldo local temporal no disponible',e)}
+ },err=>{
+  if(gmcProvSesion!==uidSesion)return;
+  window.gmcProveedoresListos=false;db.proveedores=[];
+  gmcProvEstado('No se pudo consultar Proveedores: '+mensajeFirebaseGMC(err));gmcProvMigracionEstado();renderPersonas();
+ });
+}
+async function gmcProvEjecutarPendiente(p){
+ const referencia=doc(firestoreGMC,'proveedores',p.id);
+ return runTransaction(firestoreGMC,async tx=>{
+  const anterior=await tx.get(referencia);
+  if(p.operacion==='crear'){
+   if(anterior.exists()){
+    if(anterior.data().etapaFirebase==='etapa11'&&gmcProvCamposIguales(anterior.data(),p.campos)&&anterior.data().operadorId===p.uid)return 'confirmada';
+    throw Error('El proveedor ya existe con datos diferentes. Revise el listado.');
+   }
+   tx.set(referencia,{...p.campos,id:p.id,etapaFirebase:'etapa11',revision:1,operadorId:p.uid,creadoServidor:serverTimestamp(),actualizadoPor:p.uid,actualizadoServidor:serverTimestamp()});
+  }else if(p.operacion==='editar'){
+   if(!anterior.exists())throw Error('El proveedor fue eliminado en otro dispositivo.');
+   if(anterior.data().revision===p.revision+1 && gmcProvCamposIguales(anterior.data(),p.campos)&&anterior.data().actualizadoPor===p.uid)return 'confirmada';
+   if(Number(anterior.data().revision)!==p.revision)throw Error('El proveedor cambió desde otro dispositivo. Revise los datos antes de editarlo.');
+   tx.update(referencia,{...p.campos,revision:p.revision+1,actualizadoPor:p.uid,actualizadoServidor:serverTimestamp()});
+  }else if(p.operacion==='borrar'){
+   if(!anterior.exists())return 'confirmada';
+   if(Number(anterior.data().revision)!==p.revision)throw Error('El proveedor cambió desde otro dispositivo. Revise el listado antes de eliminarlo.');
+   tx.delete(referencia);
+  }else throw Error('Operación pendiente desconocida.');
+  return 'guardada';
+ });
+}
+async function gmcProvProcesar(p){
+ if(!p||p.uid!==firebaseAuthGMC.currentUser?.uid)throw Error('La operación pertenece a otro administrador.');
+ gmcProvVerificar();gmcProvOcupado=true;
+ try{
+  const resultado=await gmcProvEjecutarPendiente(p);
+  localStorage.removeItem(gmcProvPendienteClave());
+  return resultado;
+ }finally{gmcProvOcupado=false}
+}
+window.gmcGuardarProveedorFirebase=async(registro,editarId='')=>{
+ gmcProvVerificar();
+ if(localStorage.getItem(gmcProvPendienteClave()))throw Error('Hay un proveedor pendiente de confirmar. Pulse «Comprobar operación pendiente» antes de continuar.');
+ const campos=gmcProvDatos(registro);gmcProvValidarDatos(campos);
+ const previo=editarId?db.proveedores.find(p=>p.id===editarId):null;
+ if(editarId&&!previo)throw Error('El proveedor ya no existe en la lista remota.');
+ if(db.proveedores.some(p=>p.id!==editarId&&((campos.identificacion&&p.identificacion===campos.identificacion)||p.nombre.toLocaleLowerCase('es')===campos.nombre.toLocaleLowerCase('es'))))throw Error('Ya existe un proveedor con esa identificación o nombre.');
+ const p={operacion:editarId?'editar':'crear',uid:firebaseAuthGMC.currentUser.uid,
+  id:editarId||String(registro.id||uid()),revision:previo?Number(previo.revision||0):0,campos};
+ localStorage.setItem(gmcProvPendienteClave(),JSON.stringify(p));
+ const resultado=await gmcProvProcesar(p);
+ alert('Proveedor '+(editarId?'actualizado':'registrado')+' en Firestore ('+resultado+').');
+};
+window.gmcEliminarProveedorFirebase=async id=>{
+ try{
+  gmcProvVerificar();
+  if(localStorage.getItem(gmcProvPendienteClave()))throw Error('Primero confirme la operación anterior de proveedores.');
+  const anterior=db.proveedores.find(p=>p.id===id);if(!anterior)throw Error('El proveedor ya no existe.');
+  if((db.compras||[]).some(c=>c.terceroId===id))throw Error('Este proveedor está referenciado por compras locales de este navegador. No se borró.');
+  if(!confirm('¿Eliminar el proveedor '+anterior.nombre+' de Firestore? Las compras locales de otros equipos todavía no se centralizan.'))return;
+  const p={operacion:'borrar',id,revision:Number(anterior.revision||0),uid:firebaseAuthGMC.currentUser.uid};
+  localStorage.setItem(gmcProvPendienteClave(),JSON.stringify(p));
+  await gmcProvProcesar(p);alert('Proveedor eliminado de Firestore.');
+ }catch(e){alert(e?.message||mensajeFirebaseGMC(e));}
+};
+window.gmcReintentarProveedorFirebase=async()=>{
+ try{
+  const raw=localStorage.getItem(gmcProvPendienteClave());
+  if(!raw)return alert('No hay operaciones pendientes de proveedores.');
+  const p=JSON.parse(raw);await gmcProvProcesar(p);
+  alert('Operación comprobada y confirmada en Firestore.');
+ }catch(e){alert('No se pudo confirmar la operación: '+(e?.message||mensajeFirebaseGMC(e))+'. Se mantiene la operación pendiente para evitar duplicados.');}
+};
+window.gmcMigrarProveedoresLocalesFirebase=async()=>{
+ try{
+  gmcProvVerificar();
+  if(localStorage.getItem(gmcProvPendienteClave()))throw Error('Primero confirme el proveedor pendiente.');
+  const anteriores=gmcProvRespaldo();
+  if(!anteriores.length)throw Error('No se encontró un respaldo de proveedores.');
+  if(anteriores.length>35)throw Error('Hay más de 35 proveedores en el respaldo. Para proteger los datos no se realizará la importación de forma automática.');
+  if(db.proveedores.length)throw Error('Ya existen proveedores centralizados. No se importarán copias que puedan duplicarlos.');
+  const origen=anteriores.map((x,i)=>{
+   const campos=gmcProvDatos(x);gmcProvValidarDatos(campos);
+   return {id:String(x.id||'').trim()||'proveedor_migrado_'+String(i+1),campos};
+  });
+  if(new Set(origen.map(x=>x.id)).size!==origen.length)throw Error('Hay identificadores de proveedores duplicados en el respaldo.');
+  const nombres=origen.map(x=>x.campos.nombre.toLocaleLowerCase('es'));
+  if(new Set(nombres).size!==nombres.length)throw Error('Hay nombres duplicados en el respaldo. No se realizó la migración.');
+  if(!confirm('¿Migrar los '+origen.length+' proveedores locales a Firestore? Solo si el catálogo remoto continúa vacío. Las compras NO se migrarán y el respaldo local seguirá intacto.'))return;
+  gmcProvOcupado=true;
+  const snap=await getDocsFromServer(collection(firestoreGMC,'proveedores'));
+  if(!snap.empty)throw Error('Otro dispositivo ya registró proveedores; no se importó nada.');
+  const refs=origen.map(p=>doc(firestoreGMC,'proveedores',p.id));
+  await runTransaction(firestoreGMC,async tx=>{
+   const existentes=[];for(const ref of refs)existentes.push(await tx.get(ref));
+   if(existentes.some(d=>d.exists()))throw Error('Existe al menos uno de esos proveedores en el servidor.');
+   for(let i=0;i<origen.length;i++)tx.set(refs[i],{...origen[i].campos,id:origen[i].id,etapaFirebase:'etapa11',revision:1,
+    operadorId:firebaseAuthGMC.currentUser.uid,creadoServidor:serverTimestamp(),actualizadoPor:firebaseAuthGMC.currentUser.uid,actualizadoServidor:serverTimestamp()});
+  });
+  alert('Migración completada. El respaldo local se mantiene guardado y las compras locales no se modificaron.');
+ }catch(e){alert('Migración no realizada: '+(e?.message||mensajeFirebaseGMC(e)));}
+ finally{gmcProvOcupado=false}
+};
+
 const gmcMetasPrimeraClave='gmc_etapa10_metadatos_respaldo_evaluados';
 const gmcMetasCopiaClave='gmc_etapa10_metas_locales_originales';
 try{
