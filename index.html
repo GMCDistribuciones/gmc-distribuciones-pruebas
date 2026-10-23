@@ -463,6 +463,19 @@
         </div>
         <p class="note"><strong>Limitación:</strong> esta etapa no permite restaurar la base completa ni recuperar las cuentas de Firebase Authentication. Si necesita recuperar registros contables o inventario, debe utilizarse un procedimiento distinto de reconstrucción y conciliación. Conserve el JSON original y el acta.</p>
       </div>
+      <!-- ETAPA 17: Auditoría de integridad de sólo lectura sobre Firestore central. -->
+      <div class="card" style="margin-top:14px" id="gmc17Tarjeta">
+        <h3>🧭 Auditoría preventiva de coherencia — Firestore (Etapa 17)</h3>
+        <p class="note"><strong>Solo lectura:</strong> revisa referencias y cantidades de inventario central y asignaciones, cuentas y movimientos bancarios, facturas de compra y correlativo de ventas. Genera un informe de incidencias y saldos bancarios calculados. <strong>No corrige, borra, importa ni escribe documentos.</strong></p>
+        <p class="note"><strong>Seguridad:</strong> requiere administrador Firebase, conexión confirmada y permiso de lectura. Consulta las 17 colecciones del servidor y el contador de ventas; estas consultas pueden generar cargos. El resultado NO es una instantánea global: evite operaciones simultáneas durante la revisión. No interprete un informe sin incidencias como garantía de conciliación contable total.</p>
+        <div class="actions" style="gap:8px;flex-wrap:wrap">
+          <button type="button" class="btn btn-primary" id="gmc17BotonAuditar" onclick="gmc17Ejecutar()">1. Auditar Firestore (solo lectura)</button>
+          <button type="button" class="btn btn-light" id="gmc17BotonInforme" disabled onclick="gmc17DescargarInforme()">2. Descargar informe de auditoría</button>
+        </div>
+        <p class="note" id="gmc17Estado" aria-live="polite">Listo para ejecutar una auditoría de solo lectura en la sesión del administrador.</p>
+        <div id="gmc17Resultados" style="margin-top:10px"></div>
+        <p class="note">Este diagnóstico no reemplaza los respaldos verificados de las Etapas 14 y 15, ni habilita nuevas restauraciones de la Etapa 16. Las incidencias detectadas requieren revisión antes de realizar cualquier ajuste.</p>
+      </div>
       <div class="card" style="margin-top:14px">
         <h3>Configuración general del negocio</h3>
         <p id="gmcConfigEstado" class="note" aria-live="polite">Etapa 13: esperando la conexión de Configuración con Cloud Firestore…</p>
@@ -6396,6 +6409,186 @@ window.gmc16DescargarActa=()=>{
  if(!gmc16UltimaActa)return;
  try{gmc15Sesion();}catch(e){return alert(e.message);}
  download('GMC_ACTA_RECUPERACION_ETAPA16_'+new Date().toISOString().replace(/[:.]/g,'-')+'.json',JSON.stringify(gmc16UltimaActa,null,2),'application/json;charset=utf-8');
+};
+
+
+// GMC DISTRIBUCIONES - ETAPA 17. Auditoría preventiva de Firestore: EXCLUSIVAMENTE LECTURAS.
+// GMC DISTRIBUCIONES — Etapa 17.
+// Auditoría pura, sin Firestore, almacenamiento, autenticación, red ni escrituras.
+// Las incidencias son señales de revisión; no ejecutan correcciones automáticas.
+function gmc17Auditar(colecciones, unicos={}) {
+  const requeridas=['perfiles','productos','clientes','stockUsuarios','cierresCaja','ventas',
+    'gastosOperativosUsuarios','cuentasBancarias','movimientosBancarios',
+    'gastosAdministrativos','historialCambiosGastos','gestionChequesBanco',
+    'metasCumplimiento','proveedores','compras','historialCambiosCompras',
+    'movimientosInventario'];
+  if(!colecciones||typeof colecciones!=='object')throw Error('No se recibieron colecciones completas del servidor.');
+  const indices={}; let documentos=0;
+  for(const nombre of requeridas){
+    const filas=colecciones[nombre];
+    if(!Array.isArray(filas))throw Error('Falta la colección '+nombre+'. No se genera una auditoría parcial.');
+    const mapa=new Map();
+    for(const fila of filas){
+      if(!fila||typeof fila.id!=='string'||!fila.id||!fila.datos||typeof fila.datos!=='object'||Array.isArray(fila.datos))throw Error('Documento inválido de '+nombre+'.');
+      if(mapa.has(fila.id))throw Error('Se encontraron IDs repetidos en '+nombre+'.');
+      mapa.set(fila.id,fila.datos);
+    }
+    indices[nombre]=mapa;documentos+=filas.length;
+  }
+  const incidencias=[];
+  const marcar=(nivel,codigo,coleccion,id,detalle)=>{
+    incidencias.push({nivel,codigo,coleccion,id:String(id),detalle});
+    if(incidencias.length>5000)throw Error('La auditoría encontró más de 5.000 incidencias. Requiere revisión técnica por lotes; no se entrega informe truncado.');
+  };
+  const num=(v)=>typeof v==='number'&&Number.isFinite(v)?v:NaN;
+  const cantidad=(v)=>v===undefined?0:num(v);
+  const cerca=(a,b)=>Math.abs(a-b)<0.000001;
+  const productos=indices.productos,asignaciones=indices.stockUsuarios;
+  const esperado=new Map();
+  for(const [id,p] of productos){
+    if(!Number.isFinite(num(p.stock))||num(p.stock)<0)marcar('critica','STOCK_CENTRAL_INVALIDO','productos',id,'El stock central debe ser un número no negativo.');
+    if(!Number.isFinite(cantidad(p.unidadesAsignadas))||cantidad(p.unidadesAsignadas)<0)marcar('critica','ASIGNADO_INVALIDO','productos',id,'Las unidades asignadas no son un valor válido.');
+  }
+  for(const [id,a] of asignaciones){
+    const pid=String(a.productoId||''),estado=String(a.estado||'');
+    const resto=num(a.restante),entrega=num(a.cantidad);
+    if(!Number.isFinite(resto)||!Number.isFinite(entrega)||resto<0||entrega<=0||resto>entrega+0.000001){
+      marcar('critica','ASIGNACION_CANTIDAD_INVALIDA','stockUsuarios',id,'Cantidad entregada o restante fuera de rango.');
+      continue;
+    }
+    if(estado==='abierta'){
+      if(!productos.has(pid))marcar('critica','ASIGNACION_PRODUCTO_AUSENTE','stockUsuarios',id,'La asignación abierta apunta a un producto inexistente.');
+      else esperado.set(pid,(esperado.get(pid)||0)+resto);
+    }else if(estado==='cerrada'){
+      if(!cerca(resto,0))marcar('critica','ASIGNACION_CERRADA_CON_RESTANTE','stockUsuarios',id,'La asignación figura cerrada pero mantiene unidades restantes.');
+      if(a.ultimoCierreId&&!indices.cierresCaja.has(a.ultimoCierreId))
+        marcar('revision','ASIGNACION_CIERRE_NO_ENCONTRADO','stockUsuarios',id,'La referencia al cierre no aparece entre los cierres disponibles.');
+    }else marcar('revision','ASIGNACION_ESTADO_DESCONOCIDO','stockUsuarios',id,'Estado no reconocido para conciliar cantidades abiertas.');
+  }
+  for(const [id,p] of productos){
+    const asignada=cantidad(p.unidadesAsignadas),suma=esperado.get(id)||0;
+    if(Number.isFinite(asignada)&&!cerca(asignada,suma))
+      marcar('critica','ASIGNACION_DESCUADRE','productos',id,
+        'Unidades asignadas del producto: '+asignada+'; suma restante de asignaciones abiertas: '+Math.round(suma*1000000)/1000000+'.');
+  }
+  const cuentas=indices.cuentasBancarias,idsOrigen=new Map(),saldos=[];
+  for(const [id,c] of cuentas){
+    if(!Number.isFinite(num(c.saldoInicial)))marcar('critica','SALDO_INICIAL_INVALIDO','cuentasBancarias',id,'El saldo inicial no es numérico.');
+    saldos.push({cuentaId:id,banco:String(c.banco||''),nombre:String(c.nombre||''),saldoInicial:num(c.saldoInicial),ingresos:0,gastos:0});
+  }
+  const saldoPorCuenta=new Map(saldos.map(x=>[x.cuentaId,x]));
+  for(const [id,m] of indices.movimientosBancarios){
+    const cid=String(m.cuentaId||''),v=num(m.valor);
+    if(!cuentas.has(cid))marcar('critica','MOVIMIENTO_CUENTA_AUSENTE','movimientosBancarios',id,'El movimiento bancario referencia una cuenta inexistente.');
+    if(!Number.isFinite(v)||v<=0)marcar('critica','MOVIMIENTO_IMPORTE_INVALIDO','movimientosBancarios',id,'El ingreso bancario debe ser positivo.');
+    if(cuentas.has(cid)&&Number.isFinite(v))saldoPorCuenta.get(cid).ingresos+=v;
+    const origen=String(m.origenId||'').trim();
+    if(origen){if(idsOrigen.has(origen))marcar('critica','ORIGEN_BANCARIO_REPETIDO','movimientosBancarios',id,'Existe otro movimiento con el mismo origenId: '+idsOrigen.get(origen)+'.');else idsOrigen.set(origen,id);}
+  }
+  for(const [id,g] of indices.gastosAdministrativos){
+    const cid=String(g.cuentaBancariaId||'').trim(),v=num(g.valor);
+    if(cid&&!cuentas.has(cid))marcar('critica','GASTO_CUENTA_AUSENTE','gastosAdministrativos',id,'El gasto referencia una cuenta bancaria inexistente.');
+    if(!Number.isFinite(v)||v<0)marcar('revision','GASTO_IMPORTE_INVALIDO','gastosAdministrativos',id,'Revisar el importe del gasto administrativo.');
+    if(cid&&cuentas.has(cid)&&Number.isFinite(v))saldoPorCuenta.get(cid).gastos+=v;
+  }
+  for(const item of saldos){
+    item.saldoCalculado=Number.isFinite(item.saldoInicial)?Math.round((item.saldoInicial+item.ingresos-item.gastos)*100)/100:null;
+    item.ingresos=Math.round(item.ingresos*100)/100;
+    item.gastos=Math.round(item.gastos*100)/100;
+  }
+  for(const [id,c] of indices.compras){
+    if(c.estado!=='activa')continue;
+    const lineas=Array.isArray(c.lineas)?c.lineas:[];
+    if(!lineas.length)marcar('critica','COMPRA_SIN_LINEAS','compras',id,'La compra activa no contiene líneas.');
+    for(const l of lineas){
+      const pid=String(l?.productoId||'');
+      if(!productos.has(pid))marcar('revision','COMPRA_PRODUCTO_AUSENTE','compras',id,'Una línea refiere un producto ausente del catálogo: '+pid+'.');
+      if(!Number.isFinite(num(l?.cantidad))||num(l.cantidad)<=0)marcar('critica','COMPRA_CANTIDAD_INVALIDA','compras',id,'La compra activa presenta una línea con cantidad inválida.');
+    }
+  }
+  const cont=unicos['contadores/ventas'];
+  const c=cont?.datos;
+  const facturas=new Map();let mayor=0;
+  for(const [id,v] of indices.ventas){
+    if(v.secuencia===undefined)continue; // ventas anteriores a la facturación central pueden no tener secuencia
+    if(!Number.isInteger(v.secuencia)||v.secuencia<1){
+      marcar('revision','VENTA_SECUENCIA_INVALIDA','ventas',id,'La secuencia de venta no es un entero positivo.');continue;
+    }
+    mayor=Math.max(mayor,v.secuencia);
+    if(facturas.has(v.secuencia))marcar('critica','FACTURA_SECUENCIA_REPETIDA','ventas',id,'Secuencia repetida con la venta '+facturas.get(v.secuencia)+'.');
+    else facturas.set(v.secuencia,id);
+  }
+  if(mayor>0&&(!c||!Number.isInteger(c.ultimo)||c.ultimo<mayor))
+    marcar('critica','CONTADOR_MENOR_A_VENTAS','contadores','ventas','Contador de facturas inexistente o menor que la secuencia máxima '+mayor+'.');
+  return {version:'gmc_auditoria_integridad_etapa17_v1',documentos,colecciones:requeridas.length,
+    resumen:{criticas:incidencias.filter(x=>x.nivel==='critica').length,revisiones:incidencias.filter(x=>x.nivel==='revision').length,total:incidencias.length},
+    saldosBancariosCalculados:saldos,incidencias,
+    advertencias:[
+      'SOLO LECTURA: ninguna incidencia se corrige automáticamente.',
+      'Los saldos bancarios son cálculos informativos basados en los registros leídos, no una certificación contable.',
+      'Las colecciones se consultan consecutivamente; no existe instantánea global atómica.',
+      'La ausencia de incidencias en estas verificaciones NO garantiza la integridad completa de todos los procesos.']};
+}
+
+let gmc17Ocupado=false,gmc17UltimoInforme=null;
+function gmc17Estado(mensaje){
+ const v=document.getElementById('gmc17Estado');if(v)v.textContent=mensaje;
+ const b=document.getElementById('gmc17BotonAuditar');if(b)b.disabled=gmc17Ocupado;
+ const i=document.getElementById('gmc17BotonInforme');if(i)i.disabled=gmc17Ocupado||!gmc17UltimoInforme;
+}
+function gmc17Mostrar(auditoria){
+ const caja=document.getElementById('gmc17Resultados');if(!caja)return;
+ caja.replaceChildren();
+ const resumen=document.createElement('p');resumen.style.fontWeight='bold';
+ resumen.textContent='Revisados '+auditoria.documentos+' documentos de '+auditoria.colecciones+' colecciones · '+auditoria.resumen.criticas+' incidencias críticas · '+auditoria.resumen.revisiones+' observaciones para revisar.';
+ caja.append(resumen);
+ if(!auditoria.incidencias.length){
+  const p=document.createElement('p');p.textContent='Sin incidencias en las comprobaciones implementadas. Esto no certifica que toda la contabilidad esté conciliada.';caja.append(p);
+ }else{
+  const p=document.createElement('p');p.textContent='Se muestran las primeras 30 incidencias. Descargue el informe para consultar la lista completa; no realice ajustes automáticos.';caja.append(p);
+  const lista=document.createElement('ul');lista.style.paddingLeft='22px';
+  for(const x of auditoria.incidencias.slice(0,30)){
+   const li=document.createElement('li');li.style.marginBottom='5px';
+   li.textContent=(x.nivel==='critica'?'CRÍTICA':'REVISAR')+' · '+x.coleccion+'/'+x.id+' · '+x.detalle;
+   lista.append(li);
+  }
+  caja.append(lista);
+ }
+ const t=document.createElement('p');t.textContent='Cuentas bancarias revisadas: '+auditoria.saldosBancariosCalculados.length+'. Los saldos calculados se incluyen en el informe y no modifican los registros.';caja.append(t);
+}
+window.gmc17Ejecutar=async()=>{
+ if(gmc17Ocupado)return;
+ let uid;try{uid=gmc15Sesion();}catch(e){return alert(e.message);}
+ if(!confirm('AUDITORÍA DE SOLO LECTURA: se consultarán 17 colecciones y el contador de ventas desde Firestore. Puede generar cargos por lecturas. Evite registrar movimientos mientras dure el proceso. ¿Continuar?'))return;
+ gmc17Ocupado=true;gmc17UltimoInforme=null;
+ const panel=document.getElementById('gmc17Resultados');if(panel)panel.replaceChildren();
+ gmc17Estado('Comprobando el contador antes de consultar las colecciones…');
+ try{
+  const contadorAntes=await gmcRespaldo14LeerUnico('contadores','ventas',uid);
+  const datos={};
+  for(let i=0;i<gmcRespaldo14Colecciones.length;i++){
+   gmc15Sesion();
+   const nombre=gmcRespaldo14Colecciones[i];
+   gmc17Estado('Consultando '+(i+1)+' de 17: '+nombre+'…');
+   datos[nombre]=await gmcRespaldo14LeerColeccion(nombre,uid);
+  }
+  const contadorDespues=await gmcRespaldo14LeerUnico('contadores','ventas',uid);
+  if(gmc15Canonico(contadorAntes)!==gmc15Canonico(contadorDespues))throw Error('El correlativo de facturas cambió durante la auditoría. Repita cuando no haya nuevas ventas.');
+  gmc15Sesion();
+  const auditoria=gmc17Auditar(datos,{'contadores/ventas':contadorDespues});
+  gmc17UltimoInforme={...auditoria,proyecto:firestoreGMC.app.options.projectId,administradorId:uid,fechaUTC:new Date().toISOString(),tipo:'gmc_etapa17_auditoria_lectura_v1'};
+  gmc17Mostrar(auditoria);
+  gmc17Estado('AUDITORÍA COMPLETADA SIN ESCRITURAS: '+auditoria.resumen.criticas+' incidencias críticas y '+auditoria.resumen.revisiones+' observaciones. Consulte el detalle y descargue el informe.');
+ }catch(e){
+  gmc17UltimoInforme=null;
+  if(panel)panel.replaceChildren();
+  gmc17Estado('AUDITORÍA INCOMPLETA: '+(e.message||String(e))+'. No se genera informe parcial. Ningún documento fue modificado.');
+ }finally{gmc17Ocupado=false;gmc17Estado(document.getElementById('gmc17Estado')?.textContent||'');}
+};
+window.gmc17DescargarInforme=()=>{
+ if(!gmc17UltimoInforme)return alert('Ejecute primero la auditoría de solo lectura.');
+ try{gmc15Sesion();}catch(e){return alert(e.message);}
+ download('GMC_AUDITORIA_FIRESTORE_ETAPA17_'+new Date().toISOString().replace(/[:.]/g,'-')+'.json',JSON.stringify(gmc17UltimoInforme,null,2),'application/json;charset=utf-8');
 };
 
 </script>
