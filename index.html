@@ -552,6 +552,9 @@
     <section id="compras" class="section">
       <div class="card">
         <div class="actions" style="justify-content:space-between"><h3>Compras / Facturas de compra</h3><button class="btn btn-warning" onclick="modalCompra()">+ Factura Compra</button></div>
+        <p class="note" id="gmcComprasEstado">Compras: conectando con Cloud Firestore…</p>
+        <div class="note" id="gmcComprasPendiente" style="display:none"></div>
+        <div class="note" id="gmcComprasRespaldo" style="display:none">Compras anteriores almacenadas únicamente en este navegador. Se ha conservado una copia de seguridad; no se migrarán automáticamente porque podrían duplicar inventario central.</div>
         <div class="table-wrap"><table><thead><tr><th>Fecha</th><th>Documento</th><th>Proveedor</th><th>Total</th><th></th></tr></thead><tbody id="tbCompras"></tbody></table></div>
         <div style="margin-top:18px">
           <h3>Historial de correcciones y eliminaciones de compras</h3>
@@ -1748,6 +1751,7 @@ function usuarioQueRealizoVenta(){
   return usuarioActual?.usuario||'';
 }
 function guardarDocumento(){
+  if(tempTipo==='compra'&&window.gmcGuardarDocumentoCompraFirebase)return window.gmcGuardarDocumentoCompraFirebase();
   if(tempTipo==='venta'&&window.gmcGuardarDocumentoVentaFirebase)return window.gmcGuardarDocumentoVentaFirebase();
  if(!tempLineas.length)return alert('Agregue al menos un producto');
  let tercero=(tempTipo==='venta'?db.clientes:db.proveedores).find(x=>x.id===docTercero.value);
@@ -2061,6 +2065,11 @@ async function guardarEdicionCompra(id){
  if(!adminPuedeCorregirCompra()||compraEdicionActiva!==id||document.getElementById('ecGuardar')==null||db.compras.find(x=>x.id===id)!==compra)return;
  // Comprueba nuevamente existencias tras la validación asíncrona.
  const revisado=prepararMovimientoCorreccionCompra(compra.lineas,nuevas);if(revisado.error)return alert(revisado.error);
+ if(window.gmcEditarCompraFirebase){
+   try{await window.gmcEditarCompraFirebase({id,fecha,numero,proveedorId,lineas:nuevas,motivo});}
+   catch(error){alert(error?.message||'No se pudo corregir la compra en Firestore. No se alteró el inventario.');}
+   return;
+ }
  const antes=JSON.parse(JSON.stringify(compra));
  const costoAnterior=new Map([...new Set((antes.lineas||[]).concat(nuevas).map(l=>l.productoId))].map(pid=>[pid,obtenerCostoUltimaCompra(pid,id)]));
  const tercero=db.proveedores.find(x=>x.id===proveedorId);
@@ -2100,6 +2109,11 @@ async function confirmarEliminarCompra(id){
  if(!adminPuedeCorregirCompra()||document.getElementById('delcClave')?.dataset.compraId!==id||db.compras.find(x=>x.id===id)!==compra)return;
  const revisado=prepararMovimientoCorreccionCompra(compra.lineas,[]);if(revisado.error)return alert(revisado.error);
  if(!confirm('¿Eliminar definitivamente la compra '+(compra.numero||'S/N')+'? Se conservará evidencia y se ajustará el inventario.'))return;
+ if(window.gmcEliminarCompraFirebase){
+   try{await window.gmcEliminarCompraFirebase({id,motivo});}
+   catch(error){alert(error?.message||'No se pudo eliminar la compra en Firestore. No se alteró el inventario.');}
+   return;
+ }
  const antes=JSON.parse(JSON.stringify(compra));
  const costos=new Map([...new Set((antes.lineas||[]).map(l=>l.productoId))].map(pid=>[pid,obtenerCostoUltimaCompra(pid,id)]));
  aplicarMovimientoCorreccionCompra(revisado);
@@ -3965,7 +3979,7 @@ onAuthStateChanged(firebaseAuthGMC,user=>{
   if(!user&&!document.body.classList.contains('sesion-bloqueada'))bloquearFirebaseGMC();
 });
 // ETAPA 3 - Productos y Clientes conectados a Cloud Firestore.
-// ETAPA 11 - Proveedores conectados; compras permanecen locales.
+// ETAPA 12 - Compras centralizadas con ajustes atomicos de stock y auditoria.
 let gmcMasterSesion='';
 let gmcMasterUnsubs=[];
 let gmcMasterListos={productos:false,clientes:false};
@@ -3984,6 +3998,7 @@ const gmcMaestroEstado=(tipo,texto)=>{
  if(nodo)nodo.textContent=texto;
 };
 function gmcDetenerMaestrosFirebase(){
+ gmcDetenerComprasFirebase();
  gmcDetenerProveedoresFirebase();
  gmcDetenerMetasFirebase();
  gmcDetenerCajaBancosFirebase();
@@ -4008,6 +4023,7 @@ function gmcSuscribirMaestrosFirebase(uidSesion){
  gmcDetenerMaestrosFirebase();
  gmcMasterSesion=uidSesion;
  gmcSuscribirProveedoresFirebase(uidSesion);
+ gmcSuscribirComprasFirebase(uidSesion);
  gmcSuscribirMetasFirebase(uidSesion);
  gmcSuscribirCajaBancosFirebase(uidSesion);
  gmcSuscribirAsignacionesFirebase(uidSesion);
@@ -5598,6 +5614,200 @@ window.gmcMigrarCajaBancos=async()=>{
   gmcBancoOcupado=true;try{await batch.commit();}finally{gmcBancoOcupado=false;}
   alert('Migración bancaria registrada. Conserve su respaldo local original. Verifique los saldos desde otro dispositivo.');
  }catch(e){gmcBancoAviso(e)}
+};
+
+
+// GMC DISTRIBUCIONES ETAPA 12 - Compras e historial centralizados.
+// Una compra y todos sus cambios de stock se escriben juntos en una transaccion.
+let gmcComprasSesion='',gmcComprasUnsubs=[],gmcComprasVistas={compras:false,historialCambiosCompras:false},gmcCompraOcupada=false;
+window.gmcComprasListas=false;
+const gmcCompraPendienteClave=()=> 'gmc_etapa12_compra_pendiente_'+(firebaseAuthGMC.currentUser?.uid||'sin_sesion');
+const gmcCompraRespaldoClave=()=> 'gmc_etapa12_respaldo_compras_'+(firebaseAuthGMC.currentUser?.uid||'sin_sesion');
+function gmcCompraEstado(m){const e=document.getElementById('gmcComprasEstado');if(e)e.textContent=m;}
+function gmcCompraPendiente(){try{return JSON.parse(localStorage.getItem(gmcCompraPendienteClave())||'null')}catch{return null}}
+function gmcComprasAvisos(){
+ const p=gmcCompraPendiente(),av=document.getElementById('gmcComprasPendiente');
+ if(av){av.style.display=p?'':'none';av.innerHTML=p?'⚠️ Hay una operación de compra pendiente de confirmar. No cree otra compra ni modifique inventario manualmente. <button class="btn btn-warning" onclick="gmcReintentarCompraFirebase()">Comprobar la misma operación</button> <button class="btn btn-light" onclick="gmcDescartarCompraPendienteFirebase()">Descartar solo si no se confirmó</button>':'';}
+ const copia=document.getElementById('gmcComprasRespaldo');if(copia){const x=localStorage.getItem(gmcCompraRespaldoClave());copia.style.display=x?'':'none';}
+}
+function gmcComprasRespaldoLocal(){
+ if(localStorage.getItem(gmcCompraRespaldoClave()))return;
+ if((db.compras||[]).some(c=>c.etapaFirebase!=='etapa12')||(db.historialCambiosCompras||[]).some(h=>h.etapaFirebase!=='etapa12')){
+  localStorage.setItem(gmcCompraRespaldoClave(),JSON.stringify({fecha:new Date().toISOString(),compras:(db.compras||[]).filter(c=>c.etapaFirebase!=='etapa12'),historial:(db.historialCambiosCompras||[]).filter(h=>h.etapaFirebase!=='etapa12')}));
+ }
+}
+function gmcDetenerComprasFirebase(){
+ // Rescatar las compras locales ANTES de limpiar el estado de la sesión.
+ gmcComprasRespaldoLocal();
+ for(const f of gmcComprasUnsubs.splice(0))try{f()}catch{}
+ gmcComprasSesion='';gmcComprasVistas={compras:false,historialCambiosCompras:false};window.gmcComprasListas=false;gmcCompraOcupada=false;
+ db.compras=[];db.historialCambiosCompras=[];gmcCompraEstado('Compras: inicie sesion como administrador.');gmcComprasAvisos();
+}
+function gmcSuscribirComprasFirebase(uidSesion){
+ gmcComprasRespaldoLocal();
+ for(const f of gmcComprasUnsubs.splice(0))try{f()}catch{}
+ gmcComprasSesion=uidSesion;gmcComprasVistas={compras:false,historialCambiosCompras:false};window.gmcComprasListas=false;
+ db.compras=[];db.historialCambiosCompras=[];
+ if(firebaseRolGMC!=='admin'){gmcCompraEstado('Compras: acceso exclusivo del administrador.');renderCompras();return;}
+ gmcCompraEstado('Compras: conectando con Cloud Firestore…');gmcComprasAvisos();
+ for(const nombre of ['compras','historialCambiosCompras']){
+  const off=onSnapshot(collection(firestoreGMC,nombre),{includeMetadataChanges:true},snap=>{
+   if(gmcComprasSesion!==uidSesion||firebaseAuthGMC.currentUser?.uid!==uidSesion)return;
+   gmcComprasVistas[nombre]=!snap.metadata.fromCache&&!snap.metadata.hasPendingWrites;
+   const datos=snap.docs.map(d=>({...d.data(),id:d.id}));
+   if(nombre==='compras')db.compras=datos.filter(c=>c.estado==='activa').sort((a,b)=>String(a.creadoServidor?.seconds||a.fecha||'').localeCompare(String(b.creadoServidor?.seconds||b.fecha||'')));
+   else db.historialCambiosCompras=datos.sort((a,b)=>String(a.fecha||'').localeCompare(String(b.fecha||'')));
+   window.gmcComprasListas=gmcComprasVistas.compras&&gmcComprasVistas.historialCambiosCompras;
+   gmcCompraEstado(window.gmcComprasListas?'Compras conectadas a Cloud Firestore · '+db.compras.length+' factura(s), '+db.historialCambiosCompras.length+' corrección(es).':'Compras: esperando confirmación del servidor; no modifique compras.');
+   gmcComprasAvisos();renderCompras();
+   try{localStorage.setItem(KEY,JSON.stringify(db))}catch{}
+  },err=>{
+   if(gmcComprasSesion!==uidSesion)return;
+   gmcComprasVistas[nombre]=false;window.gmcComprasListas=false;
+   gmcCompraEstado('No se pudieron consultar '+nombre+': '+mensajeFirebaseGMC(err));
+  });gmcComprasUnsubs.push(off);
+ }
+}
+function gmcCompraExigir(){
+ if(!firebaseAuthGMC.currentUser||firebaseRolGMC!=='admin'||!adminAutenticado||document.body.classList.contains('sesion-bloqueada'))throw Error('Solo el administrador autenticado puede registrar compras.');
+ if(!navigator.onLine||!window.gmcComprasListas||!gmcMasterListos.productos||!window.gmcProveedoresListos)throw Error('Espere la sincronización confirmada de Compras, Productos y Proveedores con Firestore.');
+ if(gmcCompraOcupada)throw Error('Existe otra operación de compra en curso.');
+}
+function gmcCompraRedondear(v){return Math.round((Number(v)+Number.EPSILON)*1000000)/1000000;}
+function gmcCompraPrepararLineas(lineas){
+ if(!Array.isArray(lineas)||!lineas.length||lineas.length>12)throw Error('Cada factura admite entre 1 y 12 lineas.');
+ const res=lineas.map(l=>{
+  const productoId=String(l.productoId||''),p=db.productos.find(x=>x.id===productoId);
+  const cantidad=Number(l.cantidad),precio=Number(l.precio),descuento=Number(l.descuento||0);
+  if(!p||!Number.isFinite(cantidad)||cantidad<=0||cantidad>1000000||!Number.isFinite(precio)||precio<0||!Number.isFinite(descuento)||descuento<0||descuento>cantidad*precio)throw Error('Revise productos, cantidades, costos y descuentos.');
+  const total=gmcCompraRedondear(cantidad*precio-descuento);
+  return {productoId,nombre:String(p.nombre||''),cantidad,precio,descuento,costo:Number(l.costo??p.costo??0),base:total,total};
+ });
+ if(new Set(res.map(l=>l.productoId)).size>4)throw Error('Por seguridad de la transacción, cada compra permite hasta cuatro productos distintos (hasta doce líneas).');
+ return res;
+}
+function gmcCompraCantidades(lineas){const r={};for(const l of lineas||[])r[l.productoId]=gmcCompraRedondear((r[l.productoId]||0)+Number(l.cantidad));return r;}
+function gmcCompraDatos({id,fecha,numero,proveedorId,lineas}){
+ if(!/^\d{4}-\d{2}-\d{2}$/.test(String(fecha||'')))throw Error('Fecha de factura inválida.');
+ const ps=gmcCompraPrepararLineas(lineas),prov=db.proveedores.find(x=>x.id===proveedorId);
+ if(proveedorId&&!prov)throw Error('Seleccione un proveedor registrado en Firestore.');
+ return {id,fecha,numero:String(numero||'').trim().slice(0,120),terceroId:proveedorId||'',tercero:prov?.nombre||'Sin proveedor',lineas:ps,base:gmcCompraRedondear(ps.reduce((a,l)=>a+l.base,0)),total:gmcCompraRedondear(ps.reduce((a,l)=>a+l.total,0)),costo:gmcCompraRedondear(ps.reduce((a,l)=>a+Number(l.costo||0)*l.cantidad,0)),cantidades:gmcCompraCantidades(ps)};
+}
+function gmcCompraComparar(a,b){return JSON.stringify(a)===JSON.stringify(b)}
+async function gmcCompraTransaccion(op){
+ const usuario=firebaseAuthGMC.currentUser?.uid;
+ if(!usuario||usuario!==op.uid)throw Error('La operación pendiente corresponde a otra sesión.');
+ if(!navigator.onLine||!window.gmcComprasListas||!gmcMasterListos.productos)throw Error('Se requiere confirmación de Firestore para verificar la operación pendiente.');
+ const compraRef=doc(firestoreGMC,'compras',op.id),evidenciaRef=doc(firestoreGMC,'historialCambiosCompras',op.operacionId);
+ return runTransaction(firestoreGMC,async tx=>{
+  const originalSnap=await tx.get(compraRef);
+  if(originalSnap.exists()&&originalSnap.data().ultimoOperacionId===op.operacionId)return 'confirmada';
+  if(op.tipo==='crear'&&originalSnap.exists())throw Error('Ya existe esta compra con otros datos. No se duplicó.');
+  if(op.tipo!=='crear'&&(!originalSnap.exists()||originalSnap.data().estado!=='activa'))throw Error('La compra ya no está activa en Firestore.');
+  const original=originalSnap.exists()?originalSnap.data():null;
+  if(original&&Number(original.revision)!==Number(op.revision))throw Error('La compra cambió en otro dispositivo. Actualice el listado y revise antes de repetir.');
+  const nuevos=op.tipo==='eliminar'?null:op.datos;
+  const viejoCant=original?.cantidades||{},nuevoCant=nuevos?.cantidades||{};
+  const ids=[...new Set([...Object.keys(viejoCant),...Object.keys(nuevoCant)])];
+  if(ids.length>4)throw Error('Esta corrección tiene más de cuatro productos distintos; no se modificó nada.');
+  const refs=ids.map(id=>doc(firestoreGMC,'productos',id));
+  const snaps=[];for(const ref of refs)snaps.push(await tx.get(ref));
+  if(op.tipo!=='crear'){
+   const previo=await tx.get(evidenciaRef);
+   if(previo.exists())throw Error('La evidencia de este cambio ya existe; compruebe el estado de la factura.');
+  }
+  const movimientos=[],ajustesCosto={};
+  for(let i=0;i<ids.length;i++){
+   const pid=ids[i],snap=snaps[i];if(!snap.exists())throw Error('El producto '+pid+' ya no existe en el inventario central.');
+   const antes=Number(viejoCant[pid]||0),despues=Number(nuevoCant[pid]||0),delta=gmcCompraRedondear(despues-antes);
+   const stockAnterior=Number(snap.data().stock);
+   if(!Number.isFinite(stockAnterior)||gmcCompraRedondear(stockAnterior+delta)<0)throw Error('Stock central insuficiente para corregir '+String(snap.data().nombre||pid)+'. Las unidades asignadas a vendedores no se descuentan.');
+   // Conserva el costo de la compra más reciente, como hacía el módulo local.
+   // Una edición antigua no sobrescribe el costo de una compra posterior.
+   const ultimaCompraConProducto=[...db.compras].reverse().find(c=>(c.lineas||[]).some(l=>l.productoId===pid));
+   const eraUltima=ultimaCompraConProducto?.id===op.id;
+   const precioAnterior=original?.lineas?.slice().reverse().find(l=>l.productoId===pid)?.precio;
+   const precioNuevo=nuevos?.lineas?.slice().reverse().find(l=>l.productoId===pid)?.precio;
+   if(op.tipo==='crear'&&precioNuevo!==undefined)ajustesCosto[pid]=precioNuevo;
+   else if(eraUltima&&precioAnterior!==undefined&&Math.abs(Number(snap.data().costo||0)-Number(precioAnterior))<0.000001){
+     if(op.tipo==='editar'&&precioNuevo!==undefined&&Number(precioNuevo)!==Number(precioAnterior))ajustesCosto[pid]=Number(precioNuevo);
+     if(op.tipo==='eliminar'){
+       const previa=[...db.compras].reverse().find(c=>c.id!==op.id&&(c.lineas||[]).some(l=>l.productoId===pid));
+       const anteriorCosto=previa?.lineas?.slice().reverse().find(l=>l.productoId===pid)?.precio;
+       if(anteriorCosto!==undefined)ajustesCosto[pid]=Number(anteriorCosto);
+     }
+   }
+   if(Math.abs(delta)>0.0000001||ajustesCosto[pid]!==undefined&&Math.abs(Number(ajustesCosto[pid])-Number(snap.data().costo||0))>0.000001)movimientos.push({productoId:pid,delta});
+  }
+  if(movimientos.length>4)throw Error('Demasiados productos modificados.');
+  const ahora=serverTimestamp();
+  const estado=op.tipo==='eliminar'?'eliminada':'activa';
+  const registro=op.tipo==='eliminar'?{...original}:{...nuevos};
+  const revision=op.tipo==='crear'?1:Number(original.revision)+1;
+  const compraNueva={...registro,id:op.id,estado,revision,etapaFirebase:'etapa12',operadorId:original?.operadorId||usuario,creadoServidor:original?.creadoServidor||ahora,actualizadoPor:usuario,actualizadoServidor:ahora,ultimoOperacionId:op.operacionId,movimientos};
+  if(op.tipo==='eliminar')compraNueva.cantidades={};
+  tx.set(compraRef,compraNueva);
+  for(const m of movimientos){
+   const i=ids.indexOf(m.productoId),data=snaps[i].data(),nuevoStock=gmcCompraRedondear(Number(data.stock)+m.delta);
+   const update={stock:nuevoStock,ultimoCompraId:op.operacionId};
+   if(ajustesCosto[m.productoId]!==undefined)update.costo=ajustesCosto[m.productoId];
+   tx.update(refs[i],update);
+  }
+  if(op.tipo!=='crear'){
+   const admin=JSON.parse(localStorage.getItem(ADMIN_AUTH_KEY)||'null')?.usuario||'ADMINISTRADOR';
+   tx.set(evidenciaRef,{id:op.operacionId,compraId:op.id,accion:op.tipo==='eliminar'?'ELIMINAR':'EDITAR',numero:original.numero||'S/N',fecha:new Date().toISOString(),administrador:admin,motivo:op.motivo,antes:original,despues:op.tipo==='eliminar'?null:compraNueva,movimientosInventario:movimientos.map(m=>({productoId:m.productoId,nombre:db.productos.find(p=>p.id===m.productoId)?.nombre||m.productoId,diferencia:m.delta,cantidadAnterior:Number(viejoCant[m.productoId]||0),cantidadNueva:Number(nuevoCant[m.productoId]||0)})),etapaFirebase:'etapa12',revision,operadorId:usuario});
+  }
+  return 'guardada';
+ });
+}
+async function gmcCompraProcesar(op){
+ gmcCompraOcupada=true;gmcComprasAvisos();
+ try{
+  const r=await gmcCompraTransaccion(op);
+  localStorage.removeItem(gmcCompraPendienteClave());gmcComprasAvisos();cerrarModal();
+  alert(op.tipo==='crear'?'Compra confirmada en Firestore e inventario actualizado.':op.tipo==='eliminar'?'Compra anulada en Firestore; inventario y evidencia actualizados.':'Compra corregida en Firestore con su evidencia e inventario actualizado.');return r;
+ }finally{gmcCompraOcupada=false;gmcComprasAvisos();}
+}
+window.gmcGuardarDocumentoCompraFirebase=async()=>{
+ try{
+  gmcCompraExigir();if(gmcCompraPendiente())throw Error('Ya existe una compra pendiente. Compruébela antes de iniciar otra.');
+  const id=uid(),datos=gmcCompraDatos({id,fecha:docFecha.value,numero:docNum.value,proveedorId:docTercero.value,lineas:tempLineas});
+  const op={tipo:'crear',id,uid:firebaseAuthGMC.currentUser.uid,revision:0,operacionId:uid(),datos};
+  localStorage.setItem(gmcCompraPendienteClave(),JSON.stringify(op));gmcComprasAvisos();await gmcCompraProcesar(op);
+ }catch(e){alert(e.message||mensajeFirebaseGMC(e));}
+};
+window.gmcEditarCompraFirebase=async({id,fecha,numero,proveedorId,lineas,motivo})=>{
+ gmcCompraExigir();if(gmcCompraPendiente())throw Error('Primero compruebe la operación pendiente.');
+ const original=db.compras.find(x=>x.id===id);if(!original)throw Error('No se encuentra la compra.');
+ const datos=gmcCompraDatos({id,fecha,numero,proveedorId,lineas});
+ const op={tipo:'editar',id,uid:firebaseAuthGMC.currentUser.uid,revision:original.revision,operacionId:uid(),motivo:String(motivo||''),datos};
+ if(!op.motivo)throw Error('Ingrese un motivo para la evidencia de corrección.');
+ localStorage.setItem(gmcCompraPendienteClave(),JSON.stringify(op));gmcComprasAvisos();await gmcCompraProcesar(op);
+};
+window.gmcEliminarCompraFirebase=async({id,motivo})=>{
+ gmcCompraExigir();if(gmcCompraPendiente())throw Error('Compruebe antes la operación pendiente.');
+ const original=db.compras.find(x=>x.id===id);if(!original)throw Error('No se encuentra la compra.');
+ if(!motivo?.trim())throw Error('Es obligatorio el motivo de eliminación.');
+ const op={tipo:'eliminar',id,uid:firebaseAuthGMC.currentUser.uid,revision:original.revision,operacionId:uid(),motivo:String(motivo).trim()};
+ localStorage.setItem(gmcCompraPendienteClave(),JSON.stringify(op));gmcComprasAvisos();await gmcCompraProcesar(op);
+};
+window.gmcReintentarCompraFirebase=async()=>{
+ const p=gmcCompraPendiente();if(!p)return alert('No hay una operación pendiente.');
+ try{gmcCompraExigir();await gmcCompraProcesar(p)}catch(e){alert('La operación conserva su identificador y no se duplicó. '+(e.message||mensajeFirebaseGMC(e)))}
+};
+window.gmcDescartarCompraPendienteFirebase=async()=>{
+ const p=gmcCompraPendiente();if(!p)return alert('No hay una operación pendiente.');
+ if(p.uid!==firebaseAuthGMC.currentUser?.uid)return alert('Este registro pertenece a otra sesión.');
+ if(!navigator.onLine)return alert('Compruebe la conexión antes de descartar una operación.');
+ try{
+  const snap=await getDocFromServer(doc(firestoreGMC,'compras',p.id));
+  if(snap.exists()&&snap.data().ultimoOperacionId===p.operacionId){
+   localStorage.removeItem(gmcCompraPendienteClave());gmcComprasAvisos();return alert('La operación SÍ quedó confirmada en Firestore. No se repitió.');
+  }
+  if(p.tipo!=='crear'&&snap.exists()&&Number(snap.data().revision)!==Number(p.revision))return alert('La compra cambió de revisión en Firestore. No descarte hasta comprobar el historial.');
+  if(!confirm('No se encontró esta operación en Firestore. ¿Descartar exclusivamente el intento local pendiente? NO se revertirán compras ni inventario.'))return;
+  localStorage.removeItem(gmcCompraPendienteClave());gmcComprasAvisos();alert('Se descartó el intento local sin modificar Firestore.');
+ }catch(e){alert('No se pudo verificar el estado en el servidor. Se conserva el pendiente: '+(e.message||mensajeFirebaseGMC(e)))}
 };
 
 </script>
