@@ -410,8 +410,16 @@
 
     <section id="respaldoConfig" class="section">
       <div class="grid g2">
-        <div class="card"><h3>Respaldo completo</h3><p class="note">Incluye todos los datos del negocio y los usuarios con sus permisos y verificadores de contraseñas. Conserve el archivo en un lugar privado.</p><button class="btn btn-primary" onclick="exportarRespaldoCompleto()">⬇ Descargar respaldo completo</button></div>
-        <div class="card"><h3>Restaurar respaldo completo</h3><p class="note">Reemplaza datos, usuarios y credenciales administrativas. Esta operación requiere confirmación. Acepta también los respaldos anteriores de datos.</p><label class="btn btn-light" style="display:inline-block;cursor:pointer">⬆ Seleccionar respaldo<input id="importCompleto" type="file" accept=".json,application/json" hidden onchange="restaurarRespaldoCompleto(event)"></label></div>
+        <div class="card"><h3>Respaldo anterior (copia de este navegador)</h3><p class="note"><strong>No equivale a un respaldo del servidor Firestore.</strong> Contiene datos y verificadores locales de acceso que pueden estar desactualizados. Conserve el archivo en un lugar privado; para los datos centrales utilice el respaldo verificado de la Etapa 14.</p><button class="btn btn-light" onclick="exportarRespaldoCompleto()">⬇ Descargar copia local anterior</button></div>
+        <div class="card"><h3>Restaurar respaldo anterior (solo copia del navegador)</h3><p class="note"><strong>Esta opción NO restaura Firestore.</strong> Solo reemplaza información y credenciales locales; no la utilice para importar el archivo verificado de Etapa 14 ni para recuperar facturas centrales. La acción requiere confirmación.</p><label class="btn btn-light" style="display:inline-block;cursor:pointer">⬆ Seleccionar respaldo<input id="importCompleto" type="file" accept=".json,application/json" hidden onchange="restaurarRespaldoCompleto(event)"></label></div>
+      </div>
+      <!-- ETAPA 14: Exportación verificada de los documentos centrales; no escribe Firestore. -->
+      <div class="card" style="margin-top:14px" id="gmcRespaldo14Card">
+        <h3>☁ Respaldo de datos centrales — Cloud Firestore (Etapa 14)</h3>
+        <p class="note">Lee <strong>directamente del servidor</strong> las colecciones centrales y la configuración del negocio. Incluye las facturas y la evidencia de sus correcciones, los cierres, los movimientos bancarios y los perfiles autorizados. <strong>No contiene contraseñas de Firebase Authentication</strong> ni reemplaza el respaldo local anterior.</p>
+        <p class="note">Esta exportación no modifica Firestore, no importa información ni restaura registros. <strong>No es una instantánea transaccional de toda la base de datos:</strong> evite registrar movimientos mientras se descarga. Si alguna consulta falla, no se generará un respaldo parcial.</p>
+        <p id="gmcRespaldo14Estado" class="note" aria-live="polite">Listo para consultar el servidor cuando ingrese como administrador.</p>
+        <button type="button" class="btn btn-primary" id="gmcRespaldo14Boton" onclick="gmcDescargarRespaldoFirestoreEtapa14()">⬇ Descargar respaldo verificado de Firestore</button>
       </div>
       <div class="card" style="margin-top:14px">
         <h3>Configuración general del negocio</h3>
@@ -3744,7 +3752,7 @@ openModal('Preparando acceso Firebase','<p class="note">Conectando Firebase Auth
 // La facturación, inventario, abonos y cajas continúan aislados en localStorage de PRUEBAS.
 import {initializeApp, getApps, getApp} from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-app.js';
 import {getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, EmailAuthProvider, reauthenticateWithCredential, updatePassword, sendPasswordResetEmail} from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-auth.js';
-import {getFirestore, doc, getDoc, getDocFromServer, getDocsFromServer, collection, query, where, onSnapshot, setDoc, updateDoc, deleteDoc, runTransaction, serverTimestamp, writeBatch} from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-firestore.js';
+import {getFirestore, doc, getDoc, getDocFromServer, getDocsFromServer, collection, query, where, orderBy, documentId, limit, startAfter, onSnapshot, setDoc, updateDoc, deleteDoc, runTransaction, serverTimestamp, writeBatch} from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-firestore.js';
 const configFirebaseGMC = {
   apiKey:'AIzaSyBtj-y2p3qAYWknIX6J5aK6DAzkD9bOc1s',
   authDomain:'gmcdistribucionesdb.firebaseapp.com',
@@ -5911,6 +5919,124 @@ window.gmcDescartarCompraPendienteFirebase=async()=>{
   if(!confirm('No se encontró esta operación en Firestore. ¿Descartar exclusivamente el intento local pendiente? NO se revertirán compras ni inventario.'))return;
   localStorage.removeItem(gmcCompraPendienteClave());gmcComprasAvisos();alert('Se descartó el intento local sin modificar Firestore.');
  }catch(e){alert('No se pudo verificar el estado en el servidor. Se conserva el pendiente: '+(e.message||mensajeFirebaseGMC(e)))}
+};
+
+
+// ETAPA 14 - Respaldo de solo lectura, directamente desde el servidor Firestore.
+// Registro de colecciones con lectura administrativa ya autorizada en Etapa 13.
+// Nunca usar el localStorage para completar un respaldo parcialmente descargado.
+const gmcRespaldo14Colecciones=Object.freeze([
+ 'perfiles','productos','clientes','stockUsuarios','cierresCaja','ventas',
+ 'gastosOperativosUsuarios','cuentasBancarias','movimientosBancarios',
+ 'gastosAdministrativos','historialCambiosGastos','gestionChequesBanco',
+ 'metasCumplimiento','proveedores','compras','historialCambiosCompras',
+ 'movimientosInventario'
+]);
+let gmcRespaldo14EnCurso=false;
+function gmcRespaldo14Estado(mensaje){
+ const nodo=document.getElementById('gmcRespaldo14Estado');if(nodo)nodo.textContent=mensaje;
+ const boton=document.getElementById('gmcRespaldo14Boton');if(boton)boton.disabled=gmcRespaldo14EnCurso;
+}
+function gmcRespaldo14Normalizar(valor,profundidad=0){
+ if(profundidad>35)throw Error('Un campo del respaldo excede la profundidad admitida.');
+ if(valor===null||typeof valor==='string'||typeof valor==='boolean')return valor;
+ if(typeof valor==='number'){if(!Number.isFinite(valor))throw Error('Existe un valor numérico inválido en Firestore.');return valor;}
+ if(valor===undefined)return null;
+ if(valor instanceof Date)return {__tipoFirestore:'fecha',iso:valor.toISOString()};
+ if(typeof valor?.seconds==='number'&&typeof valor?.nanoseconds==='number'&&typeof valor?.toDate==='function')
+  return {__tipoFirestore:'timestamp',segundos:valor.seconds,nanosegundos:valor.nanoseconds};
+ if(typeof valor?.toBase64==='function')return {__tipoFirestore:'bytes',base64:valor.toBase64()};
+ if(typeof valor?.path==='string'&&valor?.firestore)return {__tipoFirestore:'referencia',ruta:valor.path};
+ if(typeof valor?.latitude==='number'&&typeof valor?.longitude==='number')return {__tipoFirestore:'geopoint',latitud:valor.latitude,longitud:valor.longitude};
+ if(Array.isArray(valor))return valor.map(x=>gmcRespaldo14Normalizar(x,profundidad+1));
+ if(typeof valor==='object'){
+  const salida={};for(const [clave,v] of Object.entries(valor)){
+   if(v!==undefined)salida[clave]=gmcRespaldo14Normalizar(v,profundidad+1);
+  }
+  return salida;
+ }
+ throw Error('Se encontró un tipo de dato no admitido en el respaldo.');
+}
+function gmcRespaldo14Exigir(uidSesion){
+ if(!adminAutenticado||firebaseRolGMC!=='admin'||!firebaseAuthGMC.currentUser||
+    firebaseAuthGMC.currentUser.uid!==uidSesion||document.body.classList.contains('sesion-bloqueada'))
+  throw Error('El respaldo requiere una sesión de administrador activa en Firebase.');
+ if(!navigator.onLine)throw Error('Se necesita conexión a Internet para consultar el servidor.');
+}
+async function gmcRespaldo14LeerColeccion(nombre,uidSesion){
+ const filas=[];let cursor=null;const pagina=200;
+ for(;;){
+  gmcRespaldo14Exigir(uidSesion);
+  const argumentos=[collection(firestoreGMC,nombre),orderBy(documentId()),limit(pagina)];
+  if(cursor)argumentos.push(startAfter(cursor));
+  const lote=await getDocsFromServer(query(...argumentos));
+  if(lote.metadata.fromCache||lote.metadata.hasPendingWrites)throw Error('La colección '+nombre+' no fue confirmada por el servidor.');
+  for(const fila of lote.docs){
+   if(fila.metadata.hasPendingWrites)throw Error('Hay escrituras pendientes en '+nombre+'.');
+   filas.push({id:fila.id,datos:gmcRespaldo14Normalizar(fila.data())});
+  }
+  if(lote.docs.length<pagina)break;
+  cursor=lote.docs[lote.docs.length-1];
+  if(filas.length>200000)throw Error('La colección '+nombre+' excede el límite de seguridad del respaldo desde el navegador; no se generó un archivo incompleto.');
+ }
+ return filas;
+}
+async function gmcRespaldo14LeerUnico(coleccion,id,uidSesion){
+ gmcRespaldo14Exigir(uidSesion);
+ const r=await getDocFromServer(doc(firestoreGMC,coleccion,id));
+ if(r.metadata.fromCache||r.metadata.hasPendingWrites)throw Error('No fue posible confirmar '+coleccion+'/'+id+' en el servidor.');
+ return r.exists()?{id:r.id,datos:gmcRespaldo14Normalizar(r.data())}:null;
+}
+window.gmcDescargarRespaldoFirestoreEtapa14=async()=>{
+ if(gmcRespaldo14EnCurso)return;
+ const uidSesion=firebaseAuthGMC.currentUser?.uid;
+ try{gmcRespaldo14Exigir(uidSesion);}catch(e){return alert(e.message);}
+ if(!confirm('Se consultarán todos los registros centrales de Cloud Firestore para generar un archivo privado de solo lectura. Evite realizar operaciones mientras dura el respaldo. ¿Continuar?'))return;
+ gmcRespaldo14EnCurso=true;
+ const fechaInicio=new Date().toISOString();
+ gmcRespaldo14Estado('Iniciando lectura de los registros centrales de Firestore…');
+ try{
+  const colecciones={},conteos={};
+  const contadorInicial=await gmcRespaldo14LeerUnico('contadores','ventas',uidSesion);
+  for(let i=0;i<gmcRespaldo14Colecciones.length;i++){
+   const nombre=gmcRespaldo14Colecciones[i];
+   gmcRespaldo14Estado('Leyendo del servidor '+(i+1)+' de '+gmcRespaldo14Colecciones.length+': '+nombre+'…');
+   const filas=await gmcRespaldo14LeerColeccion(nombre,uidSesion);
+   colecciones[nombre]=filas;conteos[nombre]=filas.length;
+  }
+  const configuracion=await gmcRespaldo14LeerUnico('configuracion','principal',uidSesion);
+  const contadorFinal=await gmcRespaldo14LeerUnico('contadores','ventas',uidSesion);
+  if(JSON.stringify(contadorInicial)!==JSON.stringify(contadorFinal))
+   throw Error('El contador de facturas cambió durante la descarga. No se generó un respaldo potencialmente incompleto. Repita cuando no haya ventas en curso.');
+  gmcRespaldo14Exigir(uidSesion);
+  const documento={
+   formato:'gmc_firestore_lectura_verificada_etapa14_v1',
+   origen:{proyecto:firestoreGMC.app.options.projectId,usuarioId:uidSesion,inicioUTC:fechaInicio,finUTC:new Date().toISOString()},
+   advertencias:[
+    'Archivo de respaldo de LECTURA. NO se puede restaurar usando la función local heredada.',
+    'Las colecciones se consultan una tras otra. No es una instantánea atómica global; evite movimientos durante la exportación.',
+    'No incluye claves ni cuentas de Firebase Authentication; los perfiles Firestore sí están incluidos.',
+    'Contiene información personal y financiera: mantenga el archivo protegido.'
+   ],
+   colecciones,documentosUnicos:{'configuracion/principal':configuracion,'contadores/ventas':contadorFinal},
+   resumen:{cantidadColecciones:gmcRespaldo14Colecciones.length,totalDocumentos:Object.values(conteos).reduce((a,b)=>a+b,0)+(configuracion?1:0)+(contadorFinal?1:0),porColeccion:conteos}
+  };
+  const texto=JSON.stringify(documento,null,2);
+  // Verificación local del documento serializado antes de ponerlo a descargar.
+  const prueba=JSON.parse(texto);
+  if(prueba.formato!==documento.formato||prueba.resumen.cantidadColecciones!==gmcRespaldo14Colecciones.length)
+   throw Error('No se pudo validar la serialización del respaldo.');
+  const bytes=new TextEncoder().encode(texto);
+  const hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),b=>b.toString(16).padStart(2,'0')).join('');
+  const nombre='GMC_FIRESTORE_ETAPA14_'+new Date().toISOString().replace(/[:.]/g,'-')+'.json';
+  download(nombre,texto,'application/json;charset=utf-8');
+  gmcRespaldo14Estado('Archivo preparado para descargar: '+prueba.resumen.totalDocumentos+' documentos del servidor. SHA-256: '+hash+'. Verifique que su navegador lo haya guardado.');
+ }catch(e){
+  gmcRespaldo14Estado('No se creó el respaldo: '+(e.message||mensajeFirebaseGMC(e))+'. Los datos de Firestore no fueron modificados.');
+  alert('Respaldo central NO generado. Se evita entregar un archivo parcial. '+(e.message||mensajeFirebaseGMC(e)));
+ }finally{gmcRespaldo14EnCurso=false;
+  const boton=document.getElementById('gmcRespaldo14Boton');if(boton)boton.disabled=false;
+ }
 };
 
 </script>
