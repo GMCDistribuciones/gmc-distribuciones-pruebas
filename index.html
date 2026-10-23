@@ -415,6 +415,8 @@
       </div>
       <div class="card" style="margin-top:14px">
         <h3>Configuración general del negocio</h3>
+        <p id="gmcConfigEstado" class="note" aria-live="polite">Etapa 13: esperando la conexión de Configuración con Cloud Firestore…</p>
+        <div id="gmcConfigMigracion" class="note" style="display:none;margin:10px 0"><strong>Respaldo de configuración anterior:</strong> se encontraron datos de este navegador que todavía no están centralizados. <button type="button" class="btn btn-light" onclick="gmcMigrarConfiguracionEtapa13()">Migrar mi configuración local a Firestore</button><p>La migración es voluntaria y solo está disponible si todavía no existe una configuración en Firestore. Conserve un respaldo previo.</p></div>
         <div class="row">
           <div class="c6"><label>Identificación del negocio</label><input id="cfgRuc"></div>
           <div class="c6"><label>Razón social</label><input id="cfgRazon"></div>
@@ -2208,13 +2210,11 @@ function actualizarIconoNegocio(){
  }else if(icono)icono.remove();
 }
 function guardarConfig(){
+ // Etapa 13: la configuración NO se guarda localmente como fuente de verdad.
+ // La transacción remota verifica la revisión para no pisar cambios de otro dispositivo.
  if(iconoNegocioProcesando)return alert('Espere a que termine de procesarse la imagen.');
- const {iva,...anterior}=db.config||{};
- db.config={...anterior,ruc:cfgRuc.value.trim(),razon:cfgRazon.value.trim(),nombre:cfgNombre.value.trim(),direccion:cfgDireccion.value.trim(),telefono:cfgTelefono.value.trim(),email:cfgEmail.value.trim()};
- if(iconoNegocioPendiente)db.config.iconoNegocio=iconoNegocioPendiente;
- iconoNegocioPendiente=null;
- document.getElementById('cfgIconoArchivo').value='';
- save();alert('Configuración guardada');
+ if(typeof window.gmcGuardarConfiguracionEtapa13!=='function')return alert('La sincronización de Configuración con Firestore todavía no está disponible.');
+ return window.gmcGuardarConfiguracionEtapa13();
 }
 function renderConfig(){cfgRuc.value=db.config.ruc||'';cfgRazon.value=db.config.razon||'';cfgNombre.value=db.config.nombre||'';cfgDireccion.value=db.config.direccion||'';cfgTelefono.value=db.config.telefono||'';cfgEmail.value=db.config.email||'';mostrarVistaIconoNegocio(iconoNegocioPendiente||db.config?.iconoNegocio||'');actualizarIconoNegocio()}
 function exportarJSON(){download('respaldo_control_negocio_'+today()+'.json',JSON.stringify(db,null,2),'application/json')}
@@ -3978,6 +3978,107 @@ onAuthStateChanged(firebaseAuthGMC,user=>{
   if(gmcEfectuandoSalida||inicioPendienteGMC)return;
   if(!user&&!document.body.classList.contains('sesion-bloqueada'))bloquearFirebaseGMC();
 });
+// GMC ETAPA 13: Configuración general compartida. Sin cambios en otros módulos.
+const gmcCfg13Ref=()=>doc(firestoreGMC,'configuracion','principal');
+const gmcCfg13BackupKey='gmc_configuracion_respaldo_local_pre_etapa13_v1';
+const gmcCfg13Vacia=()=>({ruc:'',razon:'',nombre:'Mi Negocio',direccion:'',telefono:'',email:'',iconoNegocio:''});
+let gmcCfg13Disponible=false,gmcCfg13Existe=false,gmcCfg13Revision=0,gmcCfg13NoPendiente=false;
+let gmcCfg13Unsub=null,gmcCfg13Escribiendo=false;
+// Capture el estado anterior ANTES del primer snapshot remoto; nunca se migra automáticamente.
+const gmcCfg13Inicial=JSON.parse(JSON.stringify(db.config||{}));
+if(!localStorage.getItem(gmcCfg13BackupKey) &&
+   (['ruc','razon','direccion','telefono','email','iconoNegocio'].some(k=>String(gmcCfg13Inicial[k]||'').trim()) ||
+    (gmcCfg13Inicial.nombre && gmcCfg13Inicial.nombre!=='Mi Negocio'))){
+ try{localStorage.setItem(gmcCfg13BackupKey,JSON.stringify(gmcCfg13Inicial));}
+ catch(e){console.warn('No pudo conservarse el respaldo previo de configuración',e);}
+}
+function gmcCfg13Local(){try{return JSON.parse(localStorage.getItem(gmcCfg13BackupKey)||'null');}catch{return null;}}
+function gmcCfg13Avisar(mensaje){
+ const nodo=document.getElementById('gmcConfigEstado');if(nodo)nodo.textContent=mensaje;
+ const panel=document.getElementById('gmcConfigMigracion');
+ if(panel)panel.style.display=(!gmcCfg13Existe&&gmcCfg13Disponible&&gmcCfg13Local()&&firebaseRolGMC==='admin')?'':'none';
+}
+function gmcDetenerConfiguracionEtapa13(){
+ if(gmcCfg13Unsub){try{gmcCfg13Unsub();}catch{}gmcCfg13Unsub=null;}
+ gmcCfg13Disponible=false;gmcCfg13NoPendiente=false;gmcCfg13Existe=false;gmcCfg13Revision=0;
+ db.config=gmcCfg13Vacia();
+ gmcCfg13Avisar('Configuración: inicie sesión para consultar Firestore.');
+ actualizarIconoNegocio();
+}
+function gmcSuscribirConfiguracionEtapa13(sesion){
+ gmcCfg13Disponible=false;gmcCfg13Avisar('Conectando configuración general con Firestore…');
+ gmcCfg13Unsub=onSnapshot(gmcCfg13Ref(),{includeMetadataChanges:true},instantanea=>{
+  if(gmcMasterSesion!==sesion||firebaseAuthGMC.currentUser?.uid!==sesion)return;
+  gmcCfg13Disponible=!instantanea.metadata.fromCache;
+  gmcCfg13NoPendiente=!instantanea.metadata.hasPendingWrites;
+  gmcCfg13Existe=instantanea.exists();
+  gmcCfg13Revision=gmcCfg13Existe?Number(instantanea.data().revision||0):0;
+  db.config=gmcCfg13Existe?{...gmcCfg13Vacia(),...instantanea.data()}:gmcCfg13Vacia();
+  const estado=instantanea.metadata.fromCache?'Configuración en caché; esperando confirmación del servidor. No guarde cambios.':
+   !gmcCfg13NoPendiente?'Configuración pendiente de confirmación por Firestore.':
+   gmcCfg13Existe?'Configuración conectada a Cloud Firestore · revisión '+gmcCfg13Revision+'.':
+   'Configuración conectada a Cloud Firestore · sin configuración central; lista para crear o migrar.';
+  gmcCfg13Avisar(estado);
+  try{localStorage.setItem(KEY,JSON.stringify(db));}catch(e){console.warn('Copia local de configuración no disponible',e);}
+  renderAll();
+ },error=>{
+  if(gmcMasterSesion!==sesion)return;
+  gmcCfg13Disponible=false;gmcCfg13Avisar('Error de Firestore en Configuración: '+mensajeFirebaseGMC(error));
+  console.warn('Firestore configuración',error);
+ });
+}
+function gmcCfg13Exigir(){
+ if(!firebaseAuthGMC.currentUser||firebaseRolGMC!=='admin'||!adminAutenticado||
+    document.body.classList.contains('sesion-bloqueada'))throw Error('Solo el administrador autenticado en Firebase puede guardar configuración.');
+ if(!navigator.onLine||!gmcCfg13Disponible||!gmcCfg13NoPendiente)throw Error('Espere la conexión confirmada de Configuración con Firestore. No se guardó nada.');
+ if(gmcCfg13Escribiendo)throw Error('Hay una operación de configuración en curso. Compruebe su resultado antes de continuar.');
+}
+function gmcCfg13Campos(base){
+ const obj={};for(const k of ['ruc','razon','nombre','direccion','telefono','email'])obj[k]=String(base[k]||'').trim();
+ obj.iconoNegocio=typeof base.iconoNegocio==='string'?base.iconoNegocio:'';
+ if(!obj.nombre)throw Error('Ingrese el nombre comercial del negocio.');
+ if(obj.iconoNegocio && !/^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(obj.iconoNegocio))throw Error('El ícono debe ser una imagen PNG válida.');
+ if(new Blob([JSON.stringify(obj)]).size>750000)throw Error('El ícono supera el tamaño admitido por Firestore. Utilice una imagen más pequeña.');
+ return obj;
+}
+async function gmcCfg13Transaccion(campos,soloMigrar=false){
+ gmcCfg13Exigir();gmcCfg13Escribiendo=true;
+ const revisionVista=gmcCfg13Revision,existiaEnVista=gmcCfg13Existe;
+ try{
+  const uidAdmin=firebaseAuthGMC.currentUser.uid;
+  const datos=gmcCfg13Campos(campos);
+  await runTransaction(firestoreGMC,async tx=>{
+   const ref=gmcCfg13Ref();const anterior=await tx.get(ref);
+   if(soloMigrar&&anterior.exists())throw Error('Ya existe configuración en Firestore. No se importó el respaldo local.');
+   if(anterior.exists()!==existiaEnVista)throw Error('La configuración cambió en otro dispositivo. Actualice la pantalla antes de volver a guardar.');
+   if(anterior.exists()&&Number(anterior.data().revision)!==revisionVista)throw Error('La configuración fue modificada desde otro dispositivo. Actualice y vuelva a revisar los campos.');
+   const datosNuevos={...datos,id:'principal',etapaFirebase:'etapa13',revision:anterior.exists()?revisionVista+1:1,
+      creadoPor:anterior.exists()?anterior.data().creadoPor:uidAdmin,
+      creadoServidor:anterior.exists()?anterior.data().creadoServidor:serverTimestamp(),
+      actualizadoPor:uidAdmin,actualizadoServidor:serverTimestamp()};
+   tx.set(ref,datosNuevos);
+  });
+  // El snapshot remoto es la única fuente autoritativa de db.config.
+  iconoNegocioPendiente=null;
+  const input=document.getElementById('cfgIconoArchivo');if(input)input.value='';
+  alert(soloMigrar?'Configuración local migrada y confirmada en Firestore.':'Configuración guardada correctamente en Firestore.');
+ }catch(error){alert(error?.message||mensajeFirebaseGMC(error));}
+ finally{gmcCfg13Escribiendo=false;}
+}
+window.gmcGuardarConfiguracionEtapa13=()=>{
+ if(iconoNegocioProcesando)return alert('Espere a que termine el procesamiento de la imagen.');
+ const campos={ruc:cfgRuc.value,razon:cfgRazon.value,nombre:cfgNombre.value,direccion:cfgDireccion.value,
+   telefono:cfgTelefono.value,email:cfgEmail.value,iconoNegocio:iconoNegocioPendiente||db.config?.iconoNegocio||''};
+ return gmcCfg13Transaccion(campos);
+};
+window.gmcMigrarConfiguracionEtapa13=()=>{
+ const copia=gmcCfg13Local();if(!copia)return alert('No se encontró una configuración local anterior.');
+ if(!gmcCfg13Disponible||gmcCfg13Existe)return alert('La migración solo está disponible cuando el servidor confirmó que no existe configuración central.');
+ if(!confirm('¿Migrar a Firestore la configuración guardada anteriormente en este navegador? Solo podrá realizarse si no existe configuración remota.'))return;
+ return gmcCfg13Transaccion(copia,true);
+};
+// FIN GMC ETAPA 13.
+
 // ETAPA 3 - Productos y Clientes conectados a Cloud Firestore.
 // ETAPA 12 - Compras centralizadas con ajustes atomicos de stock y auditoria.
 let gmcMasterSesion='';
@@ -3998,6 +4099,7 @@ const gmcMaestroEstado=(tipo,texto)=>{
  if(nodo)nodo.textContent=texto;
 };
 function gmcDetenerMaestrosFirebase(){
+ gmcDetenerConfiguracionEtapa13();
  gmcDetenerComprasFirebase();
  gmcDetenerProveedoresFirebase();
  gmcDetenerMetasFirebase();
@@ -4022,6 +4124,7 @@ function gmcDetenerMaestrosFirebase(){
 function gmcSuscribirMaestrosFirebase(uidSesion){
  gmcDetenerMaestrosFirebase();
  gmcMasterSesion=uidSesion;
+ gmcSuscribirConfiguracionEtapa13(uidSesion);
  gmcSuscribirProveedoresFirebase(uidSesion);
  gmcSuscribirComprasFirebase(uidSesion);
  gmcSuscribirMetasFirebase(uidSesion);
