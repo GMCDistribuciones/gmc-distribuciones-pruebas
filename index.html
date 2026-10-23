@@ -541,6 +541,18 @@
         <div class="actions" style="justify-content:space-between"><h3>Inventario</h3><div class="actions"><button class="btn btn-light" onclick="imprimirTodoInventario()">🖨 Imprimir inventario</button><button class="btn btn-primary" onclick="modalInventario()">Ajuste de inventario</button></div></div>
         <div class="table-wrap"><table><thead><tr><th>Producto</th><th>Stock</th><th>Costo unit.</th><th>Valor</th></tr></thead><tbody id="tbInventario"></tbody></table></div>
       </div>
+      <!-- Informe por categoría, exclusivamente de lectura de productos y asignaciones ya sincronizados. -->
+      <div class="card" id="invCategoriasPanel" style="margin-top:14px">
+        <h3>Inventario por categoría</h3>
+        <p class="note">Existencias registradas: <strong>central</strong> (en bodega) + <strong>asignado</strong> (sobrante pendiente en manos de vendedores) = <strong>total</strong>. No incluye unidades ya vendidas. Son cantidades del sistema, no un conteo físico independiente.</p>
+        <div class="table-wrap"><table><thead><tr><th>Categoría</th><th>Productos</th><th>Central</th><th>Asignado a vendedores</th><th>Total unidades</th><th>Valor total</th></tr></thead><tbody id="tbInventarioCategoriasResumen"></tbody></table></div>
+        <div class="toolbar" style="margin-top:14px;align-items:end">
+          <div><label for="invCategoriaFiltro">Consultar categoría</label><select id="invCategoriaFiltro" onchange="renderInventarioPorCategoria()"><option value="">Todas las categorías</option></select></div>
+          <button type="button" class="btn btn-light" onclick="imprimirInventarioPorCategoria()">🖨 Imprimir inventario por categoría</button>
+        </div>
+        <p class="muted" id="invCategoriaResumen" style="font-size:12px" aria-live="polite"></p>
+        <div class="table-wrap"><table><thead><tr><th>Categoría</th><th>Código</th><th>Producto</th><th>Central</th><th>Asignado</th><th>Total unidades</th><th>Costo unit.</th><th>Valor total</th></tr></thead><tbody id="tbInventarioCategoriaDetalle"></tbody></table></div>
+      </div>
 
     </section>
 
@@ -1563,6 +1575,56 @@ function renderInventario(){
  const valorAsignado=pendientes.reduce((n,a)=>n+Number(a.restante||0)*Number(db.productos.find(p=>p.id===a.productoId)?.costo||0),0);
  document.getElementById('invStockConsolidado').textContent='Asignado a usuarios: '+unidadesAsignadas.toFixed(2)+' unidades ('+money(valorAsignado)+'). Total físico del negocio (central + usuarios): '+(Number(invUnidades.textContent)+unidadesAsignadas).toFixed(2)+' unidades · '+money(db.productos.reduce((n,p)=>n+Number(p.stock||0)*Number(p.costo||0),0)+valorAsignado)+'.';
  tbInventario.innerHTML=db.productos.map(p=>`<tr><td>${esc(p.nombre)}</td><td>${p.stock}</td><td>${money(p.costo)}</td><td>${money(p.stock*p.costo)}</td></tr>`).join('')||`<tr><td colspan="4" class="empty">Sin inventario</td></tr>`
+ renderInventarioPorCategoria();
+}
+// Inventario por categoría: cálculo de solo lectura, sin cambios a Firestore ni a las existencias.
+function gmcResumenInventarioCategorias(productos,asignaciones){
+ const numero=v=>{const n=Number(v);return Number.isFinite(n)?n:0};
+ const asignadoPorProducto=new Map();
+ for(const a of asignaciones||[]){
+  if(a.estado!=='abierta')continue;
+  const id=String(a.productoId||'');
+  asignadoPorProducto.set(id,(asignadoPorProducto.get(id)||0)+numero(a.restante));
+ }
+ const categorias=new Map(),detalles=[];
+ for(const p of productos||[]){
+  const categoria=String(p.categoria||'').trim()||'General';
+  const central=numero(p.stock),asignado=asignadoPorProducto.get(String(p.id))||0,costo=numero(p.costo);
+  const d={categoria,codigo:p.codigo||'',nombre:p.nombre||'',central,asignado,total:central+asignado,costo,valor:(central+asignado)*costo};
+  detalles.push(d);
+  if(!categorias.has(categoria))categorias.set(categoria,{categoria,productos:0,central:0,asignado:0,total:0,valor:0});
+  const c=categorias.get(categoria);c.productos++;c.central+=d.central;c.asignado+=d.asignado;c.total+=d.total;c.valor+=d.valor;
+ }
+ const comparar=(a,b)=>a.localeCompare(b,'es',{sensitivity:'base'});
+ detalles.sort((a,b)=>comparar(a.categoria,b.categoria)||comparar(String(a.nombre),String(b.nombre)));
+ return {categorias:[...categorias.values()].sort((a,b)=>comparar(a.categoria,b.categoria)),detalles};
+}
+function renderInventarioPorCategoria(){
+ const filtro=document.getElementById('invCategoriaFiltro');
+ const resumen=document.getElementById('tbInventarioCategoriasResumen');
+ const tabla=document.getElementById('tbInventarioCategoriaDetalle');
+ if(!filtro||!resumen||!tabla)return;
+ const datos=gmcResumenInventarioCategorias(db.productos,db.stockUsuarios);
+ const previo=filtro.value;
+ const opciones='<option value="">Todas las categorías</option>'+datos.categorias.map(c=>`<option value="${esc(c.categoria)}">${esc(c.categoria)}</option>`).join('');
+ if(filtro.innerHTML!==opciones){filtro.innerHTML=opciones;filtro.value=datos.categorias.some(c=>c.categoria===previo)?previo:'';}
+ const fila=c=>`<tr><td>${esc(c.categoria)}</td><td>${c.productos}</td><td>${c.central.toFixed(2)}</td><td>${c.asignado.toFixed(2)}</td><td>${c.total.toFixed(2)}</td><td>${money(c.valor)}</td></tr>`;
+ const total=datos.categorias.reduce((t,c)=>({productos:t.productos+c.productos,central:t.central+c.central,asignado:t.asignado+c.asignado,total:t.total+c.total,valor:t.valor+c.valor}),{productos:0,central:0,asignado:0,total:0,valor:0});
+ resumen.innerHTML=datos.categorias.map(fila).join('')+(datos.categorias.length?`<tr style="font-weight:700"><td>TOTAL</td><td>${total.productos}</td><td>${total.central.toFixed(2)}</td><td>${total.asignado.toFixed(2)}</td><td>${total.total.toFixed(2)}</td><td>${money(total.valor)}</td></tr>`:'<tr><td colspan="6" class="empty">Sin productos registrados</td></tr>');
+ const seleccion=filtro.value;
+ const visibles=seleccion?datos.detalles.filter(d=>d.categoria===seleccion):datos.detalles;
+ tabla.innerHTML=visibles.map(d=>`<tr><td>${esc(d.categoria)}</td><td>${esc(d.codigo)}</td><td>${esc(d.nombre)}</td><td>${d.central.toFixed(2)}</td><td>${d.asignado.toFixed(2)}</td><td>${d.total.toFixed(2)}</td><td>${money(d.costo)}</td><td>${money(d.valor)}</td></tr>`).join('')||'<tr><td colspan="8" class="empty">Sin productos en esta categoría</td></tr>';
+ const subtotal=visibles.reduce((t,d)=>({central:t.central+d.central,asignado:t.asignado+d.asignado,total:t.total+d.total,valor:t.valor+d.valor}),{central:0,asignado:0,total:0,valor:0});
+ document.getElementById('invCategoriaResumen').textContent=(seleccion||'Todas las categorías')+' · '+visibles.length+' producto(s) · Central: '+subtotal.central.toFixed(2)+' · Asignado: '+subtotal.asignado.toFixed(2)+' · Total: '+subtotal.total.toFixed(2)+' unidades · Valor: '+money(subtotal.valor);
+}
+function imprimirInventarioPorCategoria(){
+ if(!adminAutenticado||document.body.classList.contains('sesion-bloqueada'))return alert('Acceso exclusivo del administrador.');
+ const categoria=document.getElementById('invCategoriaFiltro')?.value||'';
+ const datos=gmcResumenInventarioCategorias(db.productos,db.stockUsuarios);
+ const detalles=categoria?datos.detalles.filter(d=>d.categoria===categoria):datos.detalles;
+ const subtotal=detalles.reduce((t,d)=>({central:t.central+d.central,asignado:t.asignado+d.asignado,total:t.total+d.total,valor:t.valor+d.valor}),{central:0,asignado:0,total:0,valor:0});
+ const filas=detalles.map(d=>[esc(d.categoria),esc(d.codigo),esc(d.nombre),d.central.toFixed(2),d.asignado.toFixed(2),d.total.toFixed(2),money(d.costo),money(d.valor)]);
+ imprimirTablaAdministracion('Inventario por categoría',(categoria||'Todas las categorías')+' · Fecha de impresión: '+fechaSistemaCierre()+' · Central + pendiente en vendedores; no incluye ventas', ['Categoría','Código','Producto','Central','Asignado','Total unidades','Costo unit.','Valor total'],filas,'Productos: '+detalles.length+' · Central: '+subtotal.central.toFixed(2)+' · Asignado: '+subtotal.asignado.toFixed(2)+' · Total unidades: '+subtotal.total.toFixed(2)+' · Valor total: '+money(subtotal.valor));
 }
 // Autorización puntual del administrador para editar o borrar clientes desde una sesión de vendedor.
 let solicitudClientePendiente=null;
