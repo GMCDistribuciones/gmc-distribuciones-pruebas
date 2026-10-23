@@ -476,6 +476,22 @@
         <div id="gmc17Resultados" style="margin-top:10px"></div>
         <p class="note">Este diagnóstico no reemplaza los respaldos verificados de las Etapas 14 y 15, ni habilita nuevas restauraciones de la Etapa 16. Las incidencias detectadas requieren revisión antes de realizar cualquier ajuste.</p>
       </div>
+      <!-- GMC ETAPA 18: Comparación histórica de dos auditorías Etapa 17. SIN ESCRITURAS. -->
+      <div class="card" style="margin-top:14px" id="gmc18Tarjeta">
+        <h3>📈 Comparación histórica de auditorías — Firestore (Etapa 18)</h3>
+        <p class="note"><strong>Solo lectura:</strong> compara un informe JSON anterior de la <strong>Etapa 17</strong> con la auditoría más reciente ejecutada en esta sesión. Señala incidencias nuevas, resueltas y persistentes, variación del número de documentos y cambios informativos de saldos bancarios. <strong>No altera ninguna colección ni corrige datos.</strong></p>
+        <p class="note"><strong>Importante:</strong> esta comparación usa dos informes, no revisa cada documento histórico. Una diferencia de cantidad de documentos o de saldo <strong>no es automáticamente un error</strong>. No reemplaza una conciliación contable, los respaldos originales ni una restauración.</p>
+        <label for="gmc18ArchivoAnterior"><strong>Informe JSON anterior de auditoría (Etapa 17)</strong></label>
+        <input type="file" id="gmc18ArchivoAnterior" accept=".json,application/json" onchange="gmc18LimpiarSeleccion()" style="width:100%;max-width:670px;margin:6px 0 10px" />
+        <div class="actions" style="gap:8px;flex-wrap:wrap">
+          <button type="button" class="btn btn-primary" id="gmc18BotonVerificar" onclick="gmc18VerificarAnterior()">1. Verificar informe anterior</button>
+          <button type="button" class="btn btn-light" id="gmc18BotonComparar" disabled onclick="gmc18CompararConActual()">2. Comparar con auditoría actual</button>
+          <button type="button" class="btn btn-light" id="gmc18BotonDescarga" disabled onclick="gmc18Descargar()">3. Descargar informe histórico</button>
+        </div>
+        <p class="note" id="gmc18Estado" aria-live="polite">Seleccione un informe de auditoría de la Etapa 17, verifíquelo y luego ejecute una auditoría nueva en el panel de Etapa 17 situado arriba.</p>
+        <div id="gmc18Resultados" style="margin-top:10px"></div>
+        <p class="note"><strong>Seguridad:</strong> el archivo histórico se procesa en este navegador y no se sube a servidores externos. La validación de estructura no garantiza autenticidad criptográfica; conserve el JSON original de la Etapa 17. La auditoría actual puede generar lecturas facturables de Firestore.</p>
+      </div>
       <div class="card" style="margin-top:14px">
         <h3>Configuración general del negocio</h3>
         <p id="gmcConfigEstado" class="note" aria-live="polite">Etapa 13: esperando la conexión de Configuración con Cloud Firestore…</p>
@@ -6589,6 +6605,176 @@ window.gmc17DescargarInforme=()=>{
  if(!gmc17UltimoInforme)return alert('Ejecute primero la auditoría de solo lectura.');
  try{gmc15Sesion();}catch(e){return alert(e.message);}
  download('GMC_AUDITORIA_FIRESTORE_ETAPA17_'+new Date().toISOString().replace(/[:.]/g,'-')+'.json',JSON.stringify(gmc17UltimoInforme,null,2),'application/json;charset=utf-8');
+};
+
+
+// GMC DISTRIBUCIONES - ETAPA 18. Comparación histórica de dos auditorías, SOLO LECTURA.
+// GMC DISTRIBUCIONES — ETAPA 18
+// Validación y comparación histórica de informes de auditoría Etapa 17.
+// Funciones puras: sin DOM, Firebase, red, almacenamiento ni operaciones de escritura.
+const gmc18Tipo='gmc_etapa17_auditoria_lectura_v1';
+const gmc18Version='gmc_auditoria_integridad_etapa17_v1';
+function gmc18EsObjeto(v){return !!v&&typeof v==='object'&&!Array.isArray(v);}
+function gmc18Entero(v){return Number.isSafeInteger(v)&&v>=0;}
+function gmc18Dinero(v){return v===null||(typeof v==='number'&&Number.isFinite(v));}
+function gmc18Firma(i){return JSON.stringify([i.nivel,i.codigo,i.coleccion,i.id,i.detalle]);}
+function gmc18Validar(reporte,proyecto){
+ if(!gmc18EsObjeto(reporte))throw Error('El informe debe ser un objeto JSON.');
+ if(reporte.tipo!==gmc18Tipo||reporte.version!==gmc18Version)
+  throw Error('Archivo incompatible: seleccione un informe de auditoría de la Etapa 17, no un respaldo de la Etapa 14.');
+ if(typeof reporte.proyecto!=='string'||!reporte.proyecto||reporte.proyecto.length>120)
+  throw Error('El informe no contiene un identificador de proyecto válido.');
+ if(proyecto&&reporte.proyecto!==proyecto)throw Error('El informe pertenece a otro proyecto Firebase.');
+ if(typeof reporte.fechaUTC!=='string'||!/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z$/.test(reporte.fechaUTC)||!Number.isFinite(Date.parse(reporte.fechaUTC)))
+  throw Error('El informe no contiene una fecha UTC válida.');
+ if(reporte.colecciones!==17||!gmc18Entero(reporte.documentos))throw Error('La auditoría anterior no incluye los 17 indicadores de colecciones.');
+ if(!gmc18EsObjeto(reporte.resumen)||!['criticas','revisiones','total'].every(k=>gmc18Entero(reporte.resumen[k])))
+  throw Error('El resumen de incidencias es inválido.');
+ if(!Array.isArray(reporte.incidencias)||reporte.incidencias.length>5000||reporte.incidencias.length!==reporte.resumen.total||
+    reporte.resumen.total!==reporte.resumen.criticas+reporte.resumen.revisiones)
+  throw Error('El informe está incompleto: el número de incidencias no coincide con el resumen.');
+ let criticas=0,revisiones=0;
+ for(const incidencia of reporte.incidencias){
+  if(!gmc18EsObjeto(incidencia)||!['critica','revision'].includes(incidencia.nivel)||
+   !['codigo','coleccion','id','detalle'].every(k=>typeof incidencia[k]==='string'&&incidencia[k].length>0&&incidencia[k].length<=1000))
+   throw Error('El informe contiene una incidencia con estructura inválida.');
+  if(incidencia.nivel==='critica')criticas++;else revisiones++;
+ }
+ if(criticas!==reporte.resumen.criticas||revisiones!==reporte.resumen.revisiones)throw Error('El desglose de incidencias no coincide con el resumen.');
+ if(!Array.isArray(reporte.saldosBancariosCalculados)||reporte.saldosBancariosCalculados.length>1000)
+  throw Error('El informe no contiene un listado bancario válido.');
+ const ids=new Set();
+ for(const c of reporte.saldosBancariosCalculados){
+  if(!gmc18EsObjeto(c)||typeof c.cuentaId!=='string'||!c.cuentaId||c.cuentaId.length>200||ids.has(c.cuentaId)||
+    typeof c.banco!=='string'||typeof c.nombre!=='string'||
+    !['saldoInicial','ingresos','gastos','saldoCalculado'].every(k=>gmc18Dinero(c[k])))
+   throw Error('El informe contiene una cuenta bancaria incompleta, duplicada o inválida.');
+  ids.add(c.cuentaId);
+ }
+ return reporte;
+}
+function gmc18Comparar(previo,actual,proyecto){
+ const a=gmc18Validar(previo,proyecto),b=gmc18Validar(actual,proyecto||a.proyecto);
+ if(a.proyecto!==b.proyecto)throw Error('Las auditorías pertenecen a proyectos diferentes.');
+ if(Date.parse(a.fechaUTC)>Date.parse(b.fechaUTC)+60000)
+  throw Error('La auditoría histórica tiene fecha posterior a la actual. Seleccione un archivo más antiguo.');
+ const anterior=new Map(),nuevo=new Map();
+ for(const x of a.incidencias){const k=gmc18Firma(x);let e=anterior.get(k);if(!e)anterior.set(k,e={incidencia:x,cantidad:0});e.cantidad++;}
+ for(const x of b.incidencias){const k=gmc18Firma(x);let e=nuevo.get(k);if(!e)nuevo.set(k,e={incidencia:x,cantidad:0});e.cantidad++;}
+ const incidenciasNuevas=[],incidenciasResueltas=[];
+ let persistentes=0;
+ for(const [k,val] of nuevo){
+  const anteriores=anterior.get(k)?.cantidad||0;
+  persistentes+=Math.min(val.cantidad,anteriores);
+  for(let j=0;j<val.cantidad-anteriores;j++)incidenciasNuevas.push(val.incidencia);
+ }
+ for(const [k,val] of anterior){
+  const posteriores=nuevo.get(k)?.cantidad||0;
+  for(let j=0;j<val.cantidad-posteriores;j++)incidenciasResueltas.push(val.incidencia);
+ }
+ const bancosPrevios=new Map(a.saldosBancariosCalculados.map(x=>[x.cuentaId,x]));
+ const bancosActuales=new Map(b.saldosBancariosCalculados.map(x=>[x.cuentaId,x]));
+ const saldos=[];
+ for(const [id,c] of bancosActuales){
+  const antiguo=bancosPrevios.get(id);
+  if(!antiguo){saldos.push({cuentaId:id,banco:c.banco,nombre:c.nombre,estado:'nueva',saldoAnterior:null,saldoActual:c.saldoCalculado,variacion:null});continue;}
+  const variacion=typeof antiguo.saldoCalculado==='number'&&typeof c.saldoCalculado==='number'
+   ?Math.round((c.saldoCalculado-antiguo.saldoCalculado)*100)/100:null;
+  saldos.push({cuentaId:id,banco:c.banco,nombre:c.nombre,estado:'existente',saldoAnterior:antiguo.saldoCalculado,saldoActual:c.saldoCalculado,variacion});
+ }
+ for(const [id,c] of bancosPrevios){if(!bancosActuales.has(id))
+  saldos.push({cuentaId:id,banco:c.banco,nombre:c.nombre,estado:'ausente',saldoAnterior:c.saldoCalculado,saldoActual:null,variacion:null});}
+ return {
+  tipo:'gmc_etapa18_comparacion_historica_v1',proyecto:a.proyecto,fechaComparacionUTC:new Date().toISOString(),
+  anterior:{fechaUTC:a.fechaUTC,documentos:a.documentos,colecciones:a.colecciones,criticas:a.resumen.criticas,observaciones:a.resumen.revisiones},
+  actual:{fechaUTC:b.fechaUTC,documentos:b.documentos,colecciones:b.colecciones,criticas:b.resumen.criticas,observaciones:b.resumen.revisiones},
+  variaciones:{documentos:b.documentos-a.documentos,criticas:b.resumen.criticas-a.resumen.criticas,
+   observaciones:b.resumen.revisiones-a.resumen.revisiones,incidenciasNuevas:incidenciasNuevas.length,
+   incidenciasResueltas:incidenciasResueltas.length,incidenciasPersistentes:persistentes},
+  incidenciasNuevas,incidenciasResueltas,saldosBancarios:saldos,
+  advertencias:[
+   'SOLO LECTURA: la comparación no consulta ni modifica documentos de Firestore.',
+   'Los informes comparados son dos lecturas históricas separadas; no constituyen instantáneas transaccionales.',
+   'La variación del número total de documentos no permite identificar qué documento cambió ni demostrar un error.',
+   'Los cambios de saldo son informativos; pueden corresponder a movimientos legítimos y no prueban descuadres.',
+   'La validación estructural de un JSON no autentica su origen; conserve los originales y sus huellas si están disponibles.'
+  ]
+ };
+}
+
+let gmc18Previo=null,gmc18ArchivoPrevio=null,gmc18UltimoInforme=null,gmc18Ocupado=false;
+function gmc18Estado(mensaje){
+ const p=document.getElementById('gmc18Estado');if(p)p.textContent=mensaje;
+ const a=document.getElementById('gmc18BotonVerificar');if(a)a.disabled=gmc18Ocupado;
+ const b=document.getElementById('gmc18BotonComparar');if(b)b.disabled=gmc18Ocupado||!gmc18Previo;
+ const c=document.getElementById('gmc18BotonDescarga');if(c)c.disabled=gmc18Ocupado||!gmc18UltimoInforme;
+}
+window.gmc18LimpiarSeleccion=()=>{
+ gmc18Previo=null;gmc18ArchivoPrevio=null;gmc18UltimoInforme=null;
+ const box=document.getElementById('gmc18Resultados');if(box)box.replaceChildren();
+ gmc18Estado('Archivo cambiado: verifique primero el informe histórico seleccionado.');
+};
+window.gmc18VerificarAnterior=async()=>{
+ if(gmc18Ocupado)return;
+ let proyecto;try{gmc15Sesion();proyecto=firestoreGMC.app.options.projectId;}catch(e){return alert(e.message);}
+ const f=document.getElementById('gmc18ArchivoAnterior')?.files?.[0];
+ if(!f)return alert('Seleccione un informe JSON de la auditoría Etapa 17.');
+ if(!f.name.toLowerCase().endsWith('.json')||f.size<=0||f.size>3*1024*1024)
+  return alert('El archivo debe ser JSON y tener un tamaño entre 1 byte y 3 MB.');
+ gmc18Ocupado=true;gmc18Previo=null;gmc18ArchivoPrevio=null;gmc18UltimoInforme=null;
+ document.getElementById('gmc18Resultados')?.replaceChildren();gmc18Estado('Leyendo y verificando el informe anterior…');
+ try{
+  const contenido=await f.text();
+  const datos=gmc18Validar(JSON.parse(contenido),proyecto);
+  gmc15Sesion();
+  if(document.getElementById('gmc18ArchivoAnterior')?.files?.[0]!==f)throw Error('El archivo seleccionado cambió durante la comprobación.');
+  gmc18Previo=datos;gmc18ArchivoPrevio=f;
+  gmc18Estado('INFORME ANTERIOR VÁLIDO: '+datos.documentos+' documentos; '+datos.colecciones+' colecciones; '+datos.resumen.total+' incidencias. Fecha UTC: '+datos.fechaUTC+'. Ejecute una nueva auditoría en la Etapa 17 (arriba), luego pulse Comparar.');
+ }catch(e){gmc18Estado('INFORME RECHAZADO: '+(e.message||String(e))+'. No se ha cambiado ningún dato.');}
+ finally{gmc18Ocupado=false;gmc18Estado(document.getElementById('gmc18Estado')?.textContent||'');}
+};
+function gmc18AgregarResumen(r){
+ const p=document.getElementById('gmc18Resultados');if(!p)return;
+ p.replaceChildren();
+ const cabeza=document.createElement('p');cabeza.style.fontWeight='bold';
+ cabeza.textContent='Informe anterior: '+new Date(r.anterior.fechaUTC).toLocaleString('es-EC')+' · Auditoría nueva: '+new Date(r.actual.fechaUTC).toLocaleString('es-EC');p.append(cabeza);
+ const tabla=document.createElement('table');tabla.className='table';
+ const titulo=document.createElement('tr');for(const v of ['Indicador','Anterior','Actual','Variación']){const th=document.createElement('th');th.textContent=v;titulo.append(th);}tabla.append(titulo);
+ const fila=(n,a,b,d)=>{const tr=document.createElement('tr');for(const v of [n,a,b,d]){const td=document.createElement('td');td.textContent=String(v);tr.append(td);}tabla.append(tr);};
+ const conSigno=n=>n>0?'+'+n:String(n);
+ fila('Documentos',r.anterior.documentos,r.actual.documentos,conSigno(r.variaciones.documentos));
+ fila('Incidencias críticas',r.anterior.criticas,r.actual.criticas,conSigno(r.variaciones.criticas));
+ fila('Observaciones',r.anterior.observaciones,r.actual.observaciones,conSigno(r.variaciones.observaciones));
+ p.append(tabla);
+ const info=document.createElement('p');info.textContent='Incidencias nuevas: '+r.variaciones.incidenciasNuevas+' · Resueltas: '+r.variaciones.incidenciasResueltas+' · Persistentes: '+r.variaciones.incidenciasPersistentes+'.';p.append(info);
+ const incidencias=[...r.incidenciasNuevas.slice(0,10).map(x=>'NUEVA · '+x.codigo+' · '+x.coleccion+'/'+x.id+' · '+x.detalle),...r.incidenciasResueltas.slice(0,10).map(x=>'RESUELTA · '+x.codigo+' · '+x.coleccion+'/'+x.id+' · '+x.detalle)];
+ if(incidencias.length){const ul=document.createElement('ul');ul.style.paddingLeft='22px';for(const texto of incidencias){const li=document.createElement('li');li.textContent=texto;ul.append(li);}p.append(ul);}
+ const bancos=document.createElement('p');bancos.style.fontWeight='bold';bancos.textContent='Variaciones bancarias informativas';p.append(bancos);
+ const lista=document.createElement('ul');lista.style.paddingLeft='22px';
+ for(const b of r.saldosBancarios.slice(0,30)){
+  const li=document.createElement('li');
+  const dinero=n=>typeof n==='number'?'$'+n.toFixed(2):'sin valor';
+  li.textContent=b.banco+' / '+b.nombre+': '+(b.estado==='nueva'?'cuenta nueva':b.estado==='ausente'?'cuenta no presente en informe actual':dinero(b.saldoAnterior)+' → '+dinero(b.saldoActual)+' (variación '+dinero(b.variacion)+')');
+  lista.append(li);
+ }
+ if(!r.saldosBancarios.length){const li=document.createElement('li');li.textContent='Sin cuentas bancarias en ninguno de los informes.';lista.append(li);}p.append(lista);
+ const nota=document.createElement('p');nota.className='note';nota.textContent='La comparación de indicadores NO demuestra que todos los documentos sean iguales ni que los saldos estén conciliados. Las variaciones pueden corresponder a operaciones legítimas. Descargue el informe para examinar el detalle.';p.append(nota);
+}
+window.gmc18CompararConActual=()=>{
+ if(gmc18Ocupado)return;
+ let proyecto;try{gmc15Sesion();proyecto=firestoreGMC.app.options.projectId;}catch(e){return alert(e.message);}
+ if(!gmc18Previo||gmc18ArchivoPrevio!==document.getElementById('gmc18ArchivoAnterior')?.files?.[0])return alert('Verifique primero el archivo histórico seleccionado.');
+ if(gmc17Ocupado||!gmc17UltimoInforme)return alert('Ejecute primero «Auditar Firestore (solo lectura)» en la Etapa 17. Es necesario generar un informe nuevo y completo.');
+ try{
+  const r=gmc18Comparar(gmc18Previo,gmc17UltimoInforme,proyecto);
+  gmc18UltimoInforme=r;gmc18AgregarResumen(r);
+  gmc18Estado('COMPARACIÓN TERMINADA SIN ESCRITURAS: '+r.variaciones.incidenciasNuevas+' incidencias nuevas, '+r.variaciones.incidenciasResueltas+' resueltas. Documentos: '+r.anterior.documentos+' → '+r.actual.documentos+'.');
+ }catch(e){gmc18UltimoInforme=null;document.getElementById('gmc18Resultados')?.replaceChildren();gmc18Estado('NO SE PUDO COMPARAR: '+(e.message||String(e))+'. Ningún documento fue modificado.');}
+};
+window.gmc18Descargar=()=>{
+ if(!gmc18UltimoInforme)return alert('Compare antes las auditorías.');
+ try{gmc15Sesion();}catch(e){return alert(e.message);}
+ download('GMC_COMPARACION_AUDITORIAS_ETAPA18_'+new Date().toISOString().replace(/[:.]/g,'-')+'.json',JSON.stringify(gmc18UltimoInforme,null,2),'application/json;charset=utf-8');
 };
 
 </script>
