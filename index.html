@@ -421,6 +421,26 @@
         <p id="gmcRespaldo14Estado" class="note" aria-live="polite">Listo para consultar el servidor cuando ingrese como administrador.</p>
         <button type="button" class="btn btn-primary" id="gmcRespaldo14Boton" onclick="gmcDescargarRespaldoFirestoreEtapa14()">⬇ Descargar respaldo verificado de Firestore</button>
       </div>
+      <!-- ETAPA 15: Auditoría de respaldos, en memoria y SIN RESTAURAR datos del servidor. -->
+      <div class="card" style="margin-top:14px" id="gmcEtapa15Card">
+        <h3>🔎 Validar respaldo y comparar con Firestore (Etapa 15)</h3>
+        <p class="note"><strong>Solo lectura:</strong> verifique el archivo JSON obtenido en la Etapa 14 antes de planificar una recuperación. Comprueba su estructura, los 17 conteos, IDs duplicados y la huella SHA-256; opcionalmente compara el contenido con los datos actuales de Firestore. <strong>No restaura, borra, modifica ni importa documentos.</strong></p>
+        <div class="grid g2" style="gap:12px">
+          <label>Archivo de respaldo verificado (Etapa 14)
+            <input id="gmc15Archivo" type="file" accept=".json,application/json" onchange="gmc15SeleccionArchivo()">
+          </label>
+          <label>SHA-256 original (opcional, copiado de la Etapa 14)
+            <input id="gmc15HashEsperado" type="text" maxlength="64" autocomplete="off" spellcheck="false" placeholder="64 caracteres hexadecimales">
+          </label>
+        </div>
+        <p class="note" id="gmc15Estado" aria-live="polite">Seleccione un respaldo JSON privado para comprobar su integridad. El archivo se procesa en este navegador y no se sube a ningún servidor externo.</p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button type="button" class="btn btn-primary" id="gmc15BotonValidar" onclick="gmc15ValidarArchivo()">✓ Verificar archivo y SHA-256</button>
+          <button type="button" class="btn" id="gmc15BotonComparar" disabled onclick="gmc15CompararServidor()">Comparar con Firestore (solo lectura)</button>
+          <button type="button" class="btn" id="gmc15BotonInforme" disabled onclick="gmc15DescargarInforme()">Descargar informe de diferencias</button>
+        </div>
+        <p class="note"><strong>Seguridad:</strong> la comparación puede facturar lecturas de Firestore. No es una instantánea transaccional; evite operaciones durante la comparación. Una coincidencia no significa que el respaldo pueda restaurarse con «Restaurar respaldo anterior»: esa opción sigue siendo exclusivamente local.</p>
+      </div>
       <div class="card" style="margin-top:14px">
         <h3>Configuración general del negocio</h3>
         <p id="gmcConfigEstado" class="note" aria-live="polite">Etapa 13: esperando la conexión de Configuración con Cloud Firestore…</p>
@@ -6037,6 +6057,166 @@ window.gmcDescargarRespaldoFirestoreEtapa14=async()=>{
  }finally{gmcRespaldo14EnCurso=false;
   const boton=document.getElementById('gmcRespaldo14Boton');if(boton)boton.disabled=false;
  }
+};
+
+
+// ETAPA 15 — comprobador de respaldo y diferencias, sin operaciones de escritura.
+// GMC DISTRIBUCIONES — Etapa 15: validación PURA del respaldo Etapa 14.
+// Sin navegador, Firebase, almacenamiento, red ni operaciones de escritura.
+const GMC15_COLECCIONES=Object.freeze([
+ 'perfiles','productos','clientes','stockUsuarios','cierresCaja','ventas',
+ 'gastosOperativosUsuarios','cuentasBancarias','movimientosBancarios',
+ 'gastosAdministrativos','historialCambiosGastos','gestionChequesBanco',
+ 'metasCumplimiento','proveedores','compras','historialCambiosCompras',
+ 'movimientosInventario'
+]);
+function gmc15Mapa(v){return v!==null&&typeof v==='object'&&!Array.isArray(v);}
+function gmc15Canonico(v){
+ if(Array.isArray(v))return '['+v.map(gmc15Canonico).join(',')+']';
+ if(gmc15Mapa(v))return '{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+gmc15Canonico(v[k])).join(',')+'}';
+ return JSON.stringify(v);
+}
+function gmc15ValidarEstructura(respaldo){
+ const falla=(mensaje)=>{throw Error('Respaldo inválido: '+mensaje);};
+ if(!gmc15Mapa(respaldo)||respaldo.formato!=='gmc_firestore_lectura_verificada_etapa14_v1')falla('formato de exportación no reconocido. Seleccione un JSON generado en Etapa 14.');
+ if(!gmc15Mapa(respaldo.origen)||typeof respaldo.origen.proyecto!=='string'||!respaldo.origen.proyecto||
+    typeof respaldo.origen.usuarioId!=='string'||!respaldo.origen.usuarioId||
+    !Number.isFinite(Date.parse(respaldo.origen.inicioUTC))||!Number.isFinite(Date.parse(respaldo.origen.finUTC)))falla('metadatos de origen incompletos.');
+ if(!gmc15Mapa(respaldo.colecciones)||!gmc15Mapa(respaldo.resumen)||
+    !gmc15Mapa(respaldo.resumen.porColeccion)||!gmc15Mapa(respaldo.documentosUnicos))falla('faltan secciones obligatorias.');
+ if(respaldo.resumen.cantidadColecciones!==GMC15_COLECCIONES.length)falla('cantidadColecciones incoherente.');
+ const claves=Object.keys(respaldo.colecciones),conteos=Object.keys(respaldo.resumen.porColeccion);
+ if(claves.length!==GMC15_COLECCIONES.length||conteos.length!==GMC15_COLECCIONES.length||
+    GMC15_COLECCIONES.some(k=>!Object.hasOwn(respaldo.colecciones,k)||!Object.hasOwn(respaldo.resumen.porColeccion,k)))falla('colecciones ausentes o desconocidas.');
+ const validaFila=(fila,ruta)=>{
+  if(!gmc15Mapa(fila)||typeof fila.id!=='string'||!fila.id||fila.id==='.'||fila.id==='..'||
+      fila.id.includes('/')||!gmc15Mapa(fila.datos))falla('documento defectuoso en '+ruta+'.');
+ };
+ let total=0;const resumen={};
+ for(const nombre of GMC15_COLECCIONES){
+  const filas=respaldo.colecciones[nombre];if(!Array.isArray(filas))falla('la colección '+nombre+' no es una lista.');
+  const ids=new Set();
+  for(const fila of filas){
+   validaFila(fila,nombre);
+   if(ids.has(fila.id))falla('ID duplicado en '+nombre+': '+fila.id);
+   ids.add(fila.id);
+  }
+  if(respaldo.resumen.porColeccion[nombre]!==filas.length)falla('conteo incorrecto de '+nombre+'.');
+  total+=filas.length;resumen[nombre]=filas.length;
+ }
+ const unicos=['configuracion/principal','contadores/ventas'];
+ if(Object.keys(respaldo.documentosUnicos).length!==2||unicos.some(k=>!Object.hasOwn(respaldo.documentosUnicos,k)))falla('documentos individuales ausentes.');
+ for(const clave of unicos){
+  const valor=respaldo.documentosUnicos[clave];
+  if(valor!==null){validaFila(valor,clave);if(valor.id!==clave.split('/')[1])falla('ruta incorrecta de '+clave+'.');total++;}
+ }
+ if(respaldo.resumen.totalDocumentos!==total)falla('total de documentos incorrecto.');
+ return {proyecto:respaldo.origen.proyecto,fechaInicio:respaldo.origen.inicioUTC,fechaFin:respaldo.origen.finUTC,
+  totalDocumentos:total,conteos:resumen,unicos:unicos.map(k=>({ruta:k,existe:respaldo.documentosUnicos[k]!==null}))};
+}
+function gmc15CompararColeccion(origen,actual,nombre){
+ if(!Array.isArray(origen)||!Array.isArray(actual))throw Error('Colección '+nombre+' no disponible para comparación.');
+ const mapa=new Map(origen.map(x=>[x.id,x.datos]));
+ const existentes=new Set();let iguales=0,cambiados=0,nuevos=0;const ejemplos=[];
+ for(const doc of actual){
+  existentes.add(doc.id);
+  if(!mapa.has(doc.id)){nuevos++;if(ejemplos.length<8)ejemplos.push({id:doc.id,diferencia:'solo en Firestore actual'});}
+  else if(gmc15Canonico(mapa.get(doc.id))!==gmc15Canonico(doc.datos)){
+   cambiados++;if(ejemplos.length<8)ejemplos.push({id:doc.id,diferencia:'contenido diferente'});
+  }else iguales++;
+ }
+ let faltantes=0;
+ for(const doc of origen){if(!existentes.has(doc.id)){faltantes++;if(ejemplos.length<8)ejemplos.push({id:doc.id,diferencia:'solo en respaldo'});}}
+ return {coleccion:nombre,documentosRespaldo:origen.length,documentosServidor:actual.length,iguales,cambiados,nuevos,faltantes,ejemplos};
+}
+
+let gmc15ArchivoValidado=null;
+let gmc15Informe=null;
+let gmc15Procesando=false;
+function gmc15Estado(mensaje){
+ const el=document.getElementById('gmc15Estado');if(el)el.textContent=mensaje;
+ const v=document.getElementById('gmc15BotonValidar');if(v)v.disabled=gmc15Procesando;
+ const c=document.getElementById('gmc15BotonComparar');if(c)c.disabled=gmc15Procesando||!gmc15ArchivoValidado;
+ const i=document.getElementById('gmc15BotonInforme');if(i)i.disabled=gmc15Procesando||!gmc15Informe;
+}
+window.gmc15SeleccionArchivo=()=>{
+ gmc15ArchivoValidado=null;gmc15Informe=null;
+ gmc15Estado('Archivo seleccionado. Presione «Verificar archivo y SHA-256». No se enviará a Firestore.');
+};
+function gmc15Sesion(){
+ const usuario=firebaseAuthGMC.currentUser?.uid;
+ gmcRespaldo14Exigir(usuario);
+ return usuario;
+}
+async function gmc15Sha256(texto){
+ const bytes=new TextEncoder().encode(texto);
+ return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),b=>b.toString(16).padStart(2,'0')).join('');
+}
+window.gmc15ValidarArchivo=async()=>{
+ if(gmc15Procesando)return;
+ const input=document.getElementById('gmc15Archivo'),archivo=input?.files?.[0];
+ if(!archivo)return alert('Seleccione primero un respaldo JSON de la Etapa 14.');
+ try{gmc15Sesion();}catch(e){return alert(e.message);}
+ if(archivo.size===0||archivo.size>50*1024*1024)return alert('El archivo está vacío o supera el límite de verificación de 50 MB. No se procesó.');
+ gmc15Procesando=true;gmc15ArchivoValidado=null;gmc15Informe=null;
+ gmc15Estado('Verificando JSON, registros y SHA-256 en este navegador…');
+ try{
+  const texto=await archivo.text(),contenido=JSON.parse(texto),resumen=gmc15ValidarEstructura(contenido);
+  const hash=await gmc15Sha256(texto),esperado=document.getElementById('gmc15HashEsperado')?.value?.trim()?.toLowerCase()||'';
+  if(esperado&&!/^[0-9a-f]{64}$/.test(esperado))throw Error('El SHA-256 de referencia debe tener exactamente 64 caracteres hexadecimales.');
+  if(esperado&&esperado!==hash)throw Error('ALERTA: el SHA-256 no coincide con el registrado al descargar el respaldo. No lo utilice para recuperar datos.');
+  if(firebaseAuthGMC.currentUser?.uid!==contenido.origen.usuarioId)throw Error('El respaldo pertenece a otra sesión administradora.');
+  if(contenido.origen.proyecto!==firestoreGMC.app.options.projectId)throw Error('El proyecto del respaldo no coincide con este Firestore.');
+  gmc15Sesion();
+  gmc15ArchivoValidado={contenido,resumen,hash,archivoNombre:archivo.name};
+  gmc15Estado('ESTRUCTURA VÁLIDA: '+resumen.totalDocumentos+' documentos, 17 colecciones; proyecto correcto. SHA-256: '+hash+'. '+
+   (esperado?'Huella original COINCIDE.':'Sin huella externa: se calculó SHA-256, pero no es posible comprobar que el archivo no se haya alterado desde su descarga.')+
+   ' Puede comparar con el servidor sin modificar datos.');
+ }catch(e){gmc15ArchivoValidado=null;gmc15Estado('NO VALIDADO: '+(e.message||String(e))+' Ningún dato fue modificado.');}
+ finally{gmc15Procesando=false;gmc15Estado(document.getElementById('gmc15Estado')?.textContent||'');}
+};
+window.gmc15CompararServidor=async()=>{
+ if(gmc15Procesando||!gmc15ArchivoValidado)return;
+ const valido=gmc15ArchivoValidado;
+ let sesion;try{sesion=gmc15Sesion();}catch(e){return alert(e.message);}
+ if(!confirm('Se leerán las 17 colecciones y documentos individuales desde Cloud Firestore. Puede generar cargos por lecturas, pero NO se modificará ningún dato. Evite registrar movimientos mientras dura esta comparación. ¿Continuar?'))return;
+ gmc15Procesando=true;gmc15Informe=null;gmc15Estado('Preparando comparación de solo lectura…');
+ try{
+  const antes=await gmcRespaldo14LeerUnico('contadores','ventas',sesion);
+  const diferencias=[];
+  for(let j=0;j<GMC15_COLECCIONES.length;j++){
+   gmc15Sesion();const nombre=GMC15_COLECCIONES[j];
+   gmc15Estado('Comparando colección '+(j+1)+' de 17: '+nombre+'…');
+   const actuales=await gmcRespaldo14LeerColeccion(nombre,sesion);
+   diferencias.push(gmc15CompararColeccion(valido.contenido.colecciones[nombre],actuales,nombre));
+  }
+  for(const [nombre,id] of [['configuracion','principal'],['contadores','ventas']]){
+   const previo=valido.contenido.documentosUnicos[nombre+'/'+id];
+   const actual=await gmcRespaldo14LeerUnico(nombre,id,sesion);
+   diferencias.push(gmc15CompararColeccion(previo?[previo]:[],actual?[actual]:[],nombre+'/'+id));
+  }
+  const despues=await gmcRespaldo14LeerUnico('contadores','ventas',sesion);
+  if(gmc15Canonico(antes)!==gmc15Canonico(despues))throw Error('El contador de ventas cambió durante la comparación. Repita cuando no haya actividad; no se presenta un resultado incompleto.');
+  gmc15Sesion();
+  const totales={iguales:0,cambiados:0,nuevos:0,faltantes:0};
+  for(const fila of diferencias)for(const nombre of Object.keys(totales))totales[nombre]+=fila[nombre];
+  gmc15Informe={tipo:'gmc_informe_comparacion_respaldo_etapa15_v1',
+    origenProyecto:valido.resumen.proyecto,archivo:valido.archivoNombre,sha256Archivo:valido.hash,
+    comparadoUTC:new Date().toISOString(),totales,porColeccion:diferencias,
+    advertencias:['SOLO LECTURA: no se modificó Firestore ni se restauró información.',
+      'Resultado obtenido por lecturas consecutivas; no es una instantánea global transaccional.',
+      'Diferencias indican que una restauración necesita conciliación humana. NO use el restaurador local.']};
+  const iguales=totales.cambiados===0&&totales.nuevos===0&&totales.faltantes===0;
+  gmc15Estado((iguales?'COINCIDENCIA DE DOCUMENTOS. ':'HAY DIFERENCIAS: ')+
+   'Iguales '+totales.iguales+'; cambiados '+totales.cambiados+'; solo en servidor '+totales.nuevos+'; solo en respaldo '+totales.faltantes+'. '+
+   'Ningún documento fue modificado. Descargue el informe de diferencias.');
+ }catch(e){gmc15Informe=null;gmc15Estado('COMPARACIÓN INCOMPLETA: '+(e.message||String(e))+'. No se genera informe parcial ni se modifica Firestore.');}
+ finally{gmc15Procesando=false;gmc15Estado(document.getElementById('gmc15Estado')?.textContent||'');}
+};
+window.gmc15DescargarInforme=()=>{
+ if(!gmc15Informe)return alert('Primero complete la comparación con Firestore.');
+ try{gmc15Sesion();}catch(e){return alert(e.message);}
+ download('GMC_INFORME_ETAPA15_'+new Date().toISOString().replace(/[:.]/g,'-')+'.json',JSON.stringify(gmc15Informe,null,2),'application/json;charset=utf-8');
 };
 
 </script>
