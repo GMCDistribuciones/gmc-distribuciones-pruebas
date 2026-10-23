@@ -1127,12 +1127,41 @@ function siguienteCodigoProducto(){
   while(usados.has(String(numero).padStart(6,'0')))numero++;
   return String(numero).padStart(6,'0');
 }
+// Categorías de productos: las categorías nuevas se comparten al guardar un producto en Firestore.
+// Mantiene las categorías ya registradas y permite añadir otras sin cambiar las reglas.
+function categoriasProductoDisponibles(categoriaActual='General'){
+ const categorias=['General','TE','TABACO',...(db.productos||[]).map(p=>String(p.categoria||'').trim()),categoriaActual];
+ const encontradas=new Set();
+ return categorias.filter(c=>{
+  const nombre=String(c||'').trim();
+  if(!nombre)return false;
+  // Se respeta la escritura exacta de categorías antiguas durante su edición.
+  if(encontradas.has(nombre))return false;
+  encontradas.add(nombre);
+  return true;
+ });
+}
+function cambiarCategoriaProducto(){
+ const seleccion=document.getElementById('pCategoria');
+ const nueva=document.getElementById('pCategoriaNueva');
+ if(!seleccion||!nueva)return;
+ nueva.style.display=seleccion.value==='__nueva_categoria__'?'block':'none';
+ if(seleccion.value==='__nueva_categoria__')nueva.focus();
+}
+function categoriaProductoSeleccionada(){
+ const categoria=document.getElementById('pCategoria');
+ if(!categoria)return '';
+ if(categoria.value==='__nueva_categoria__')return (document.getElementById('pCategoriaNueva')?.value||'').trim();
+ return categoria.value.trim();
+}
 function modalProducto(p=null){
-  openModal(p?'Editar producto':'Nuevo producto',`
+ const categoriaActual=String(p?.categoria||'General').trim()||'General';
+ const categorias=categoriasProductoDisponibles(categoriaActual);
+ openModal(p?'Editar producto':'Nuevo producto',`
   <div class="row">
    <div class="c3"><label>Código</label><input id="pCodigo" value="${esc(p?.codigo||siguienteCodigoProducto())}" readonly></div>
    <div class="c6"><label>Producto</label><input id="pNombre" value="${esc((p?.nombre||'').toUpperCase())}" oninput="this.value=this.value.toLocaleUpperCase('es')"></div>
-   <div class="c3"><label>Categoría</label><input id="pCategoria" value="${esc(p?.categoria||'General')}"></div>
+   <div class="c3"><label>Categoría</label><select id="pCategoria" onchange="cambiarCategoriaProducto()">${categorias.map(c=>`<option value="${esc(c)}" ${c===categoriaActual?'selected':''}>${esc(c)}</option>`).join('')}<option value="__nueva_categoria__">+ Nueva categoría…</option></select><input type="text" id="pCategoriaNueva" placeholder="Nombre de la nueva categoría" style="display:none;margin-top:7px"></div>
    <div class="c3"><label>Precio compra</label><input id="pCosto" type="number" step="0.01" value="${p?.costo??0}"></div>
    <div class="c3"><label>PVP1</label><input id="pPvp1" type="number" step="0.01" value="${p?.pvp1??p?.precio??0}"></div>
    <div class="c3"><label>PVP2</label><input id="pPvp2" type="number" step="0.01" value="${p?.pvp2??0}"></div>
@@ -1184,6 +1213,8 @@ async function guardarProducto(id){
  if(!nombre)return alert('Ingrese el nombre del producto');
  const normalizar=v=>String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().replace(/\s+/g,' ').toLocaleUpperCase('es');
  if(db.productos.some(x=>x.id!==id&&normalizar(x.nombre)===normalizar(nombre)))return alert('Ya existe un producto con esta descripción');
+ const categoria=categoriaProductoSeleccionada();
+ if(!categoria)return alert('Seleccione una categoría o escriba el nombre de la nueva categoría.');
  const anterior=id?db.productos.find(x=>x.id===id):null;
  if(boton)boton.disabled=true;
  try{
@@ -1191,7 +1222,7 @@ async function guardarProducto(id){
   const imagen=archivo?await convertirImagenProducto(archivo):(anterior?.imagen||anterior?.img||'');
   const pvp1=+pPvp1.value||0;
   const {iva:impuestoAnterior,...productoAnterior}=anterior||{};
-  const obj={...productoAnterior,id:id||uid(),codigo:anterior?.codigo||pCodigo.value.trim()||siguienteCodigoProducto(),nombre,categoria:pCategoria.value.trim(),precio:pvp1,pvp1,pvp2:+pPvp2.value||0,pvp3:+pPvp3.value||0,pvp4:+pPvp4.value||0,pvp5:+pPvp5.value||0,costo:+pCosto.value||0,stock:+pStock.value||0,imagen};
+  const obj={...productoAnterior,id:id||uid(),codigo:anterior?.codigo||pCodigo.value.trim()||siguienteCodigoProducto(),nombre,categoria,precio:pvp1,pvp1,pvp2:+pPvp2.value||0,pvp3:+pPvp3.value||0,pvp4:+pPvp4.value||0,pvp5:+pPvp5.value||0,costo:+pCosto.value||0,stock:+pStock.value||0,imagen};
   if(db.productos.some(x=>x.id!==id&&String(x.codigo)===String(obj.codigo)))return alert('El código del producto ya existe');
   await window.gmcGuardarMaestroFirebase('productos',obj);
   try{audit('GUARDAR PRODUCTO',obj.codigo+' '+obj.nombre);save();}
