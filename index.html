@@ -591,7 +591,7 @@
         </div>
         <div class="table-wrap" style="margin-top:12px"><table><thead><tr><th>Fecha</th><th>Usuario</th><th>Total entregado</th><th>Vendido</th><th>Devuelto</th><th>Por devolver</th><th>Estado</th><th>Detalle</th></tr></thead><tbody id="tbStockUsuarios"></tbody></table></div>
       </div>
-      <p class="note" style="margin-top:12px">La edición y eliminación requieren la contraseña actual del administrador. Las asignaciones cerradas y las que ya están vinculadas a ventas conservan su historial.</p>
+      <p class="note" style="margin-top:12px">La edición y eliminación requieren la contraseña actual del administrador. Las asignaciones cerradas y las que ya están vinculadas a ventas conservan su historial. Las anulaciones no borran documentos: devuelven las unidades sin vender y conservan evidencia en Firestore.</p>
     </section>
 
     <section id="ventas" class="section">
@@ -1429,13 +1429,13 @@ function resumenLoteAsignacion(lineas){
  const pendiente=lineas.reduce((n,a)=>n+(a.estado==='abierta'?Number(a.restante||0):0),0);
  const vendido=lineas.reduce((n,a)=>n+Math.max(0,Number(a.cantidad||0)-Number(a.restante||0)-Number(a.devuelto||0)),0);
  const abiertas=lineas.filter(a=>a.estado==='abierta').length;
- return {entregado,vendido,devuelto,pendiente,estado:abiertas===lineas.length?'Asignado':abiertas?'Parcialmente devuelto':'Devuelto'};
+ return {entregado,vendido,devuelto,pendiente,estado:lineas.every(a=>a.estado==='anulada')?'Anulada':abiertas===lineas.length?'Asignado':abiertas?'Parcialmente devuelto':'Devuelto'};
 }
 function verDetalleAsignacionUsuario(id){
  if(!accesoAsignaciones())return alert('No tiene acceso a las asignaciones');
  const referencia=db.stockUsuarios.find(a=>a.id===id);if(!referencia)return alert('Asignación no encontrada');
  const lineas=lineasDeLoteAsignacion(referencia),total=resumenLoteAsignacion(lineas);
- openModal('Detalle de asignación a '+referencia.usuario,`<p><b>Usuario:</b> ${esc(referencia.usuario)} · <b>Fecha:</b> ${esc(referencia.fecha||'—')} · <b>Total entregado:</b> ${total.entregado.toFixed(2)} unidades</p><div class="table-wrap"><table><thead><tr><th>Producto</th><th>Entregado</th><th>Vendido</th><th>Devuelto</th><th>Por devolver</th><th>Estado</th><th>Acciones</th></tr></thead><tbody>${lineas.map(a=>`<tr><td>${esc(a.nombre)}</td><td>${Number(a.cantidad||0).toFixed(2)}</td><td>${Math.max(0,Number(a.cantidad||0)-Number(a.restante||0)-Number(a.devuelto||0)).toFixed(2)}</td><td>${Number(a.devuelto||0).toFixed(2)}</td><td>${a.estado==='abierta'?Number(a.restante||0).toFixed(2):'0.00'}</td><td>${a.estado==='abierta'?'Asignado':'Devuelto · '+esc(a.fechaCierre||'')}</td><td>${a.estado==='abierta'?`<div class="actions" style="flex-wrap:nowrap;gap:4px"><button class="btn btn-light" title="Editar" aria-label="Editar" onclick="editarAsignacionUsuario(this.dataset.id)" data-id="${esc(a.id)}">✏️</button><button class="btn btn-light danger" title="Borrar" aria-label="Borrar" onclick="borrarAsignacionUsuario(this.dataset.id)" data-id="${esc(a.id)}">🗑️</button></div>`:'—'}</td></tr>`).join('')}</tbody></table></div><p class="right" style="font-weight:700">Total entregado: ${total.entregado.toFixed(2)} · Vendido: ${total.vendido.toFixed(2)} · Devuelto: ${total.devuelto.toFixed(2)} · Por devolver: ${total.pendiente.toFixed(2)}</p><div class="actions" style="justify-content:flex-end"><button class="btn btn-light" onclick="cerrarModal()">Cerrar</button></div>`);
+ openModal('Detalle de asignación a '+referencia.usuario,`<p><b>Usuario:</b> ${esc(referencia.usuario)} · <b>Fecha:</b> ${esc(referencia.fecha||'—')} · <b>Total entregado:</b> ${total.entregado.toFixed(2)} unidades</p><div class="table-wrap"><table><thead><tr><th>Producto</th><th>Entregado</th><th>Vendido</th><th>Devuelto</th><th>Por devolver</th><th>Estado</th><th>Acciones</th></tr></thead><tbody>${lineas.map(a=>`<tr><td>${esc(a.nombre)}</td><td>${Number(a.cantidad||0).toFixed(2)}</td><td>${Math.max(0,Number(a.cantidad||0)-Number(a.restante||0)-Number(a.devuelto||0)).toFixed(2)}</td><td>${Number(a.devuelto||0).toFixed(2)}</td><td>${a.estado==='abierta'?Number(a.restante||0).toFixed(2):'0.00'}</td><td>${a.estado==='abierta'?'Asignado':a.estado==='anulada'?'Anulada':'Devuelto · '+esc(a.fechaCierre||'')}</td><td><div class="actions" style="flex-wrap:wrap;gap:4px">${a.estado==='abierta'&&adminAutenticado?`<button class="btn btn-light" title="Agregar más unidades" aria-label="Agregar más unidades" onclick="ampliarAsignacionUsuario(this.dataset.id)" data-id="${esc(a.id)}">➕</button><button class="btn btn-light" title="Editar" aria-label="Editar" onclick="editarAsignacionUsuario(this.dataset.id)" data-id="${esc(a.id)}">✏️</button><button class="btn btn-light danger" title="Anular" aria-label="Anular" onclick="borrarAsignacionUsuario(this.dataset.id)" data-id="${esc(a.id)}">🗑️</button>`:''}${adminAutenticado?`<button class="btn btn-light" title="Ver evidencia" aria-label="Ver evidencia" onclick="verEvidenciaAsignacion(this.dataset.id)" data-id="${esc(a.id)}">📋</button>`:''}</div></td></tr>`).join('')}</tbody></table></div><p class="right" style="font-weight:700">Total entregado: ${total.entregado.toFixed(2)} · Vendido: ${total.vendido.toFixed(2)} · Devuelto: ${total.devuelto.toFixed(2)} · Por devolver: ${total.pendiente.toFixed(2)}</p><div class="actions" style="justify-content:flex-end"><button class="btn btn-light" onclick="cerrarModal()">Cerrar</button></div>`);
 }
 function renderStockUsuarios(){
  const usuario=document.getElementById('asigUsuario'),producto=document.getElementById('asigProducto'),tabla=document.getElementById('tbStockUsuarios');if(!usuario||!producto||!tabla)return;
@@ -1478,76 +1478,48 @@ function renderStockUsuarios(){
   return `<tr><td>${esc(ref.fecha||'—')}</td><td>${esc(ref.usuario)}</td><td><strong>${total.entregado.toFixed(2)}</strong></td><td>${total.vendido.toFixed(2)}</td><td>${total.devuelto.toFixed(2)}</td><td>${total.pendiente.toFixed(2)}</td><td>${total.estado}</td><td><button class="btn btn-light" style="padding:7px 10px" title="Ver detalle de productos" aria-label="Ver detalle de productos" data-id="${esc(ref.id)}" onclick="verDetalleAsignacionUsuario(this.dataset.id)">👁️</button></td></tr>`;
  }).join('')||'<tr><td colspan="8" class="empty">Sin asignaciones de stock</td></tr>';
 }
-// Correcciones de asignación protegidas con la clave del administrador principal.
+// Correcciones de asignación centralizadas: ninguna edición o baja altera db local.
 function accesoAsignaciones(){return !document.body.classList.contains('sesion-bloqueada')&&(adminAutenticado||!!(usuarioActual?.modulos||[]).includes('asignaciones'))}
-async function comprobarClaveAsignaciones(clave){
- let credenciales;
- try{credenciales=JSON.parse(localStorage.getItem(ADMIN_AUTH_KEY)||'null')}catch{}
- return !!(clave&&credenciales?.sal&&credenciales?.hash&&await hashClaveAdmin(clave,credenciales.sal)===credenciales.hash);
-}
+function accesoCorreccionAsignacion(){return !document.body.classList.contains('sesion-bloqueada')&&adminAutenticado&&!!window.gmcFirebase?.auth?.currentUser}
 function asignacionVinculadaVenta(id){return db.ventas.some(v=>Array.isArray(v.stockDistribucion)&&v.stockDistribucion.some(d=>d.asignacionId===id))}
-function editarAsignacionUsuario(id){
- if(!accesoAsignaciones())return alert('No tiene acceso a las asignaciones');
+function asignacionSinConsumos(a){return a?.estado==='abierta'&&Math.abs(Number(a.cantidad||0)-Number(a.restante||0))<0.000001&&Number(a.devuelto||0)===0&&!a.ultimaVentaId&&!a.ultimoCierreId&&!asignacionVinculadaVenta(a.id)}
+function ampliarAsignacionUsuario(id){
+ if(!accesoCorreccionAsignacion())return alert('Solo el administrador puede agregar existencias.');
  const a=db.stockUsuarios.find(x=>x.id===id);
- if(!a||a.estado!=='abierta')return alert('Solo se pueden corregir asignaciones abiertas');
- const usada=asignacionVinculadaVenta(a.id)||Number(a.cantidad||0)-Number(a.restante||0)-Number(a.devuelto||0)>0.000001;
+ if(!a||a.estado!=='abierta')return alert('La asignación ya no está abierta.');
+ if(cierreHechoHoyUsuario(a.usuarioId))return alert('El vendedor ya cerró caja hoy. No se puede ampliar su stock hoy.');
+ cancelarLineasAsignacion();abrirModalAsignacionLote();
+ const usuario=document.getElementById('asigUsuario'),producto=document.getElementById('asigProducto');
+ if([...usuario.options].some(o=>o.value===a.usuarioId))usuario.value=a.usuarioId;
+ if([...producto.options].some(o=>o.value===a.productoId))producto.value=a.productoId;
+ document.getElementById('asigCantidad').value='';
+}
+function editarAsignacionUsuario(id){
+ if(!accesoCorreccionAsignacion())return alert('Solo el administrador puede editar asignaciones.');
+ const a=db.stockUsuarios.find(x=>x.id===id);
+ if(!a||a.estado!=='abierta')return alert('Solo se pueden corregir asignaciones abiertas.');
+ if(!asignacionSinConsumos(a))return alert('Esta asignación ya tiene ventas, devoluciones o cierres. No se modifica su historial. Puede entregar más producto mediante una asignación nueva.');
  const opcionesUsuarios=cargarUsuarios().filter(u=>u.activo||u.id===a.usuarioId).map(u=>`<option value="${esc(u.id)}" ${u.id===a.usuarioId?'selected':''}>${esc(u.usuario)}</option>`).join('');
  const opcionesProductos=db.productos.map(p=>`<option value="${esc(p.id)}" ${p.id===a.productoId?'selected':''}>${esc(p.nombre)}</option>`).join('');
- const vendido=Math.max(0,Number(a.cantidad||0)-Number(a.restante||0)-Number(a.devuelto||0));
- openModal('Corregir asignación de productos',`<p class="note">Corrija la cantidad entregada. ${usada?'Esta asignación está vinculada a una venta: no puede cambiar de usuario ni de producto.':'Puede corregir también el usuario y el producto mientras no existan ventas vinculadas.'} La corrección del inventario central se realiza automáticamente.</p>
- <div class="row">
- <div class="c6"><label>Usuario</label><select id="edAsigUsuario" ${usada?'disabled':''}>${opcionesUsuarios}</select></div>
- <div class="c6"><label>Producto</label><select id="edAsigProducto" ${usada?'disabled':''}>${opcionesProductos}</select></div>
- <div class="c6"><label>Cantidad entregada (mínimo ya vendido: ${vendido.toFixed(2)})</label><input id="edAsigCantidad" type="number" min="${vendido}" step="0.01" value="${esc(a.cantidad)}"></div>
- <div class="c6"><label>Contraseña del administrador (obligatoria)</label><input id="edAsigClave" type="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')guardarEdicionAsignacionUsuario('${a.id}')"></div>
- </div><div class="actions" style="margin-top:12px"><button class="btn btn-primary" onclick="guardarEdicionAsignacionUsuario('${a.id}')">Guardar corrección</button><button class="btn btn-light" onclick="cerrarModal()">Cancelar</button></div>`);
-}
-async function guardarEdicionAsignacionUsuario(id){
- if(!accesoAsignaciones())return;
- const a=db.stockUsuarios.find(x=>x.id===id);if(!a||a.estado!=='abierta')return alert('La asignación ya no está abierta');
- const clave=document.getElementById('edAsigClave')?.value||'';
- if(!await comprobarClaveAsignaciones(clave))return alert('Contraseña del administrador incorrecta. No se realizaron cambios.');
- const vinculada=asignacionVinculadaVenta(id)||Number(a.cantidad||0)-Number(a.restante||0)-Number(a.devuelto||0)>0.000001;
- const usuarioId=vinculada?a.usuarioId:document.getElementById('edAsigUsuario').value;
- const productoId=vinculada?a.productoId:document.getElementById('edAsigProducto').value;
- const u=cargarUsuarios().find(x=>x.id===usuarioId),p=db.productos.find(x=>x.id===productoId),original=db.productos.find(x=>x.id===a.productoId);
- if(!u||!p||!original)return alert('El usuario o el producto no existe');
- if(cierreHechoHoyUsuario(u.id)&&u.id!==a.usuarioId)return alert('El usuario seleccionado ya cerró su caja hoy');
- const cantidad=Number(document.getElementById('edAsigCantidad').value);
- const vendido=Math.max(0,Number(a.cantidad||0)-Number(a.restante||0)-Number(a.devuelto||0));
- if(!Number.isFinite(cantidad)||cantidad<=0||cantidad+0.000001<vendido)return alert('La cantidad debe ser positiva y no menor que la cantidad ya vendida');
- const restoNuevo=Math.round((cantidad-vendido)*1000000)/1000000;
- const restoAnterior=Number(a.restante||0);
- const cambioProducto=p.id!==original.id;
- if(cambioProducto&&restoNuevo>Number(p.stock||0)+0.000001)return alert('No hay stock central suficiente del nuevo producto');
- if(!cambioProducto&&restoNuevo>Number(p.stock||0)+restoAnterior+0.000001)return alert('No hay stock central suficiente');
- if(cambioProducto){original.stock=Number(original.stock||0)+restoAnterior;p.stock=Number(p.stock||0)-restoNuevo;}
- else p.stock=Number(p.stock||0)+restoAnterior-restoNuevo;
- a.usuarioId=u.id;a.usuario=u.usuario;a.productoId=p.id;a.nombre=p.nombre;a.cantidad=cantidad;a.restante=restoNuevo;
- audit('CORREGIR ASIGNACION STOCK',u.usuario+' · '+p.nombre+' · '+cantidad+' · '+id);
- cerrarModal();save();
+ openModal('Editar asignación sin consumos',`<p class="note">La corrección ajusta las existencias centrales y genera evidencia permanente con los valores anteriores y nuevos. Solo se pueden corregir entregas sin ventas ni devoluciones.</p><div class="row">
+ <div class="c6"><label>Vendedor</label><select id="edAsigUsuario">${opcionesUsuarios}</select></div>
+ <div class="c6"><label>Producto</label><select id="edAsigProducto">${opcionesProductos}</select></div>
+ <div class="c6"><label>Cantidad entregada</label><input id="edAsigCantidad" type="number" min="0.01" step="0.01" value="${esc(a.cantidad)}"></div>
+ <div class="c6"><label>Motivo del cambio</label><input id="edAsigMotivo" maxlength="250" placeholder="Motivo obligatorio"></div>
+ <div class="c12"><label>Contraseña actual del administrador Firebase</label><input id="edAsigClave" type="password" autocomplete="current-password"></div>
+ </div><div class="actions" style="margin-top:12px"><button class="btn btn-primary" onclick="guardarEdicionAsignacionUsuario('${esc(a.id)}')">Guardar corrección</button><button class="btn btn-light" onclick="cerrarModal()">Cancelar</button></div>`);
 }
 function borrarAsignacionUsuario(id){
- if(!accesoAsignaciones())return alert('No tiene acceso a las asignaciones');
+ if(!accesoCorreccionAsignacion())return alert('Solo el administrador puede anular asignaciones.');
  const a=db.stockUsuarios.find(x=>x.id===id);
- if(!a||a.estado!=='abierta')return alert('Solo se pueden borrar asignaciones abiertas');
- if(asignacionVinculadaVenta(id)||Number(a.cantidad||0)-Number(a.restante||0)-Number(a.devuelto||0)>0.000001)return alert('Esta asignación tiene ventas vinculadas. No se puede borrar sin afectar el historial; puede corregir la cantidad no vendida.');
- openModal('Eliminar asignación de stock',`<p class="note">Se eliminará la asignación de <b>${esc(a.usuario)}</b> para <b>${esc(a.nombre)}</b> (${Number(a.restante||0).toFixed(2)} unidades). El sobrante regresará al inventario central.</p>
- <label>Contraseña del administrador (obligatoria)</label><input id="borrarAsigClave" type="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')confirmarBorrarAsignacionUsuario('${a.id}')">
- <div class="actions" style="margin-top:12px"><button class="btn btn-danger" onclick="confirmarBorrarAsignacionUsuario('${a.id}')">Borrar asignación</button><button class="btn btn-light" onclick="cerrarModal()">Cancelar</button></div>`);
+ if(!a||a.estado!=='abierta')return alert('Solo se pueden anular asignaciones abiertas.');
+ if(!asignacionSinConsumos(a))return alert('Esta asignación tiene ventas, devoluciones o cierres. Se conserva su historial; solo puede agregar nuevas entregas.');
+ openModal('Anular asignación sin consumos',`<p class="note">Se devolverán <b>${Number(a.restante||0).toFixed(2)}</b> unidades de <b>${esc(a.nombre)}</b> al inventario central. La asignación NO se borrará: quedará como ANULADA y se conservará evidencia inmutable.</p>
+ <label>Motivo de la anulación</label><input id="borrarAsigMotivo" maxlength="250" placeholder="Motivo obligatorio">
+ <label style="margin-top:12px">Contraseña actual del administrador Firebase</label><input id="borrarAsigClave" type="password" autocomplete="current-password">
+ <div class="actions" style="margin-top:12px"><button class="btn btn-danger" onclick="confirmarBorrarAsignacionUsuario('${esc(a.id)}')">Confirmar anulación</button><button class="btn btn-light" onclick="cerrarModal()">Cancelar</button></div>`);
 }
-async function confirmarBorrarAsignacionUsuario(id){
- if(!accesoAsignaciones())return;
- const a=db.stockUsuarios.find(x=>x.id===id);
- if(!a||a.estado!=='abierta'||asignacionVinculadaVenta(id)||Number(a.cantidad||0)-Number(a.restante||0)-Number(a.devuelto||0)>0.000001)return alert('La asignación ya no puede borrarse porque cambió o tiene ventas vinculadas');
- if(!await comprobarClaveAsignaciones(document.getElementById('borrarAsigClave')?.value||''))return alert('Contraseña del administrador incorrecta. No se realizaron cambios.');
- const p=db.productos.find(x=>x.id===a.productoId);if(!p)return alert('Producto no encontrado. No se modificaron los datos.');
- if(!confirm('¿Eliminar definitivamente esta asignación y devolver sus unidades al inventario central?'))return;
- p.stock=Number(p.stock||0)+Number(a.restante||0);
- db.stockUsuarios=db.stockUsuarios.filter(x=>x.id!==id);
- audit('BORRAR ASIGNACION STOCK',a.usuario+' · '+a.nombre+' · '+a.cantidad+' · '+id);
- cerrarModal();save();
-}
+// Los métodos de guardar/anular y consultar evidencia están definidos dentro del módulo Firebase.
 // Devuelve un plan de consumo para la venta sin modificar datos.
 function planStockUsuario(idUsuario,solicitadas,distribucionAnterior=[]){
  const copia=new Map((db.stockUsuarios||[]).filter(a=>a.estado==='abierta').map(a=>[a.id,Number(a.restante||0)]));
@@ -4875,64 +4847,96 @@ window.guardarAsignacionLote=async()=>{
  }catch(err){alert(err.message||mensajeFirebaseGMC(err));}
  finally{gmcMovimientoEnCurso=false;}
 };
+// ETAPA: corrección y anulación de asignaciones (solo administrador Firebase).
+function gmcResumenEvidenciaAsignacion(a){
+ return {usuarioId:String(a.usuarioId),usuario:String(a.usuario||''),productoId:String(a.productoId),nombre:String(a.nombre||''),cantidad:Number(a.cantidad),restante:Number(a.restante),devuelto:Number(a.devuelto||0),estado:String(a.estado)};
+}
+async function gmcAutorizarMovimientoAsignacion(clave){
+ gmcExigirInventarioCentral();
+ if(!clave)throw Error('Ingrese la contraseña actual del administrador Firebase.');
+ const actual=firebaseAuthGMC.currentUser;
+ if(!actual?.email)throw Error('No se pudo verificar la sesión del administrador.');
+ await reauthenticateWithCredential(actual,EmailAuthProvider.credential(actual.email,clave));
+}
 window.guardarEdicionAsignacionUsuario=async(id)=>{
  try{
-  gmcExigirInventarioCentral();
   const antigua=db.stockUsuarios.find(a=>a.id===id);
-  if(!antigua||antigua.estado!=='abierta')throw Error('La asignación no está disponible.');
-  if(!await comprobarClaveAsignaciones(document.getElementById('edAsigClave')?.value||''))throw Error('Contraseña del administrador incorrecta.');
-  const vinculada=asignacionVinculadaVenta(id)||Number(antigua.cantidad||0)-Number(antigua.restante||0)-Number(antigua.devuelto||0)>0.000001;
-  if(vinculada)throw Error('Esta asignación tiene movimientos de venta locales. Espere a centralizar las ventas antes de corregirla.');
-  const vendedor=cargarUsuarios().find(u=>u.id===document.getElementById('edAsigUsuario')?.value);
+  if(!asignacionSinConsumos(antigua))throw Error('La asignación contiene movimientos o ya fue modificada. No se alteró.');
+  const vendedor=cargarUsuarios().find(u=>u.id===document.getElementById('edAsigUsuario')?.value&&u.activo);
   const nuevoProductoId=document.getElementById('edAsigProducto')?.value;
   const cantidad=Number(document.getElementById('edAsigCantidad')?.value);
-  if(!vendedor||!gmcCantidadValida(cantidad))throw Error('Ingrese un vendedor y cantidad válidos.');
-  const aRef=doc(firestoreGMC,'stockUsuarios',id),anteriorRef=doc(firestoreGMC,'productos',antigua.productoId),nuevoRef=doc(firestoreGMC,'productos',nuevoProductoId);
+  const motivo=(document.getElementById('edAsigMotivo')?.value||'').trim();
+  if(!vendedor||!db.productos.some(p=>p.id===nuevoProductoId))throw Error('Seleccione un vendedor activo y un producto válido.');
+  if(!Number.isFinite(cantidad)||cantidad<=0||Math.abs(cantidad*100-Math.round(cantidad*100))>0.000001)throw Error('Ingrese una cantidad positiva con máximo dos decimales.');
+  if(!motivo||motivo.length>250)throw Error('Registre el motivo de la corrección (hasta 250 caracteres).');
+  if(cierreHechoHoyUsuario(vendedor.id))throw Error('El vendedor tiene un cierre de caja hoy. No se puede modificar la entrega.');
+  if(antigua.usuarioId===vendedor.id&&antigua.productoId===nuevoProductoId&&Number(antigua.cantidad)===cantidad)throw Error('No hay cambios que registrar.');
+  await gmcAutorizarMovimientoAsignacion(document.getElementById('edAsigClave')?.value||'');
+  const aRef=doc(firestoreGMC,'stockUsuarios',id),anteriorRef=doc(firestoreGMC,'productos',antigua.productoId);
+  const nuevoRef=doc(firestoreGMC,'productos',nuevoProductoId);
   const movimiento=doc(firestoreGMC,'movimientosInventario',uid());
   gmcMovimientoEnCurso=true;
   await runTransaction(firestoreGMC,async tx=>{
    const snapAsignacion=await tx.get(aRef),snapAnterior=await tx.get(anteriorRef);
    const snapNuevo=nuevoProductoId===antigua.productoId?snapAnterior:await tx.get(nuevoRef);
    if(!snapAsignacion.exists()||!snapAnterior.exists()||!snapNuevo.exists())throw Error('Una ficha ya no existe.');
-   const actual=snapAsignacion.data();
-   if(actual.estado!=='abierta'||actual.usuarioId!==antigua.usuarioId||actual.productoId!==antigua.productoId||Number(actual.restante)!==Number(actual.cantidad)||Number(actual.devuelto||0)!==0)throw Error('La asignación cambió o contiene consumos. No se modificó.');
-   const devuelto=Number(actual.restante||0);
-   const cambiado=nuevoProductoId!==actual.productoId;
-   const stockAnterior=Number(snapAnterior.data().stock||0),stockNuevo=Number(snapNuevo.data().stock||0);
-   const finalNuevo=stockNuevo+(cambiado?0:devuelto)-cantidad;
-   if(finalNuevo< -0.000001)throw Error('Stock insuficiente para corregir esta asignación.');
-   if(cambiado){
-    tx.update(anteriorRef,{stock:gmcRedondear6(stockAnterior+devuelto),unidadesAsignadas:gmcRedondear6(Number(snapAnterior.data().unidadesAsignadas||0)-devuelto)});
+   const actual={...snapAsignacion.data(),id};
+   if(!asignacionSinConsumos(actual)||actual.usuarioId!==antigua.usuarioId||actual.productoId!==antigua.productoId||Number(actual.cantidad)!==Number(antigua.cantidad)||Number(actual.revision||0)!==Number(antigua.revision||0))throw Error('La asignación fue modificada por otro dispositivo o tiene consumos.');
+   if(actual.usuarioId!==vendedor.id){
+    const perfilSnap=await tx.get(doc(firestoreGMC,'perfiles',vendedor.id));
+    if(!perfilSnap.exists()||perfilSnap.data().rol!=='vendedor'||perfilSnap.data().activo!==true)throw Error('El vendedor no está activo en Firestore.');
+   }
+   const stockAnterior=Number(snapAnterior.data().stock||0),stockNuevo=Number(snapNuevo.data().stock||0),entregado=Number(actual.restante);
+   if(nuevoProductoId===actual.productoId){
+    if(stockAnterior+entregado+0.000001<cantidad)throw Error('No hay stock central suficiente.');
+   }else if(stockNuevo+0.000001<cantidad)throw Error('No hay stock central suficiente del nuevo producto.');
+   const despues={...actual,usuarioId:vendedor.id,usuario:vendedor.usuario,productoId:nuevoProductoId,nombre:String(snapNuevo.data().nombre),cantidad,restante:cantidad,revision:Number(actual.revision||0)+1,ultimoMovimientoId:movimiento.id};
+   if(nuevoProductoId===actual.productoId){
+    tx.update(anteriorRef,{stock:gmcRedondear6(stockAnterior+entregado-cantidad),unidadesAsignadas:gmcRedondear6(Number(snapAnterior.data().unidadesAsignadas||0)+cantidad-entregado)});
+   }else{
+    tx.update(anteriorRef,{stock:gmcRedondear6(stockAnterior+entregado),unidadesAsignadas:gmcRedondear6(Number(snapAnterior.data().unidadesAsignadas||0)-entregado)});
     tx.update(nuevoRef,{stock:gmcRedondear6(stockNuevo-cantidad),unidadesAsignadas:gmcRedondear6(Number(snapNuevo.data().unidadesAsignadas||0)+cantidad)});
-   }else tx.update(anteriorRef,{stock:gmcRedondear6(stockAnterior+devuelto-cantidad),unidadesAsignadas:gmcRedondear6(Number(snapAnterior.data().unidadesAsignadas||0)+cantidad-devuelto)});
-   tx.update(aRef,{usuarioId:vendedor.id,usuario:vendedor.usuario,productoId:nuevoProductoId,nombre:snapNuevo.data().nombre,cantidad,restante:cantidad});
-   tx.set(movimiento,{id:movimiento.id,tipo:'correccion_asignacion',asignacionId:id,fecha:new Date().toISOString(),usuarioId:firebaseAuthGMC.currentUser.uid});
+   }
+   tx.update(aRef,{usuarioId:despues.usuarioId,usuario:despues.usuario,productoId:despues.productoId,nombre:despues.nombre,cantidad:despues.cantidad,restante:despues.restante,revision:despues.revision,ultimoMovimientoId:despues.ultimoMovimientoId});
+   tx.set(movimiento,{id:movimiento.id,tipo:'correccion_asignacion',asignacionId:id,fecha:new Date().toISOString(),usuarioId:firebaseAuthGMC.currentUser.uid,autorizadoPor:firebaseAuthGMC.currentUser.uid,motivo,revision:despues.revision,antes:gmcResumenEvidenciaAsignacion(actual),despues:gmcResumenEvidenciaAsignacion(despues)});
   });
-  audit('CORREGIR ASIGNACION STOCK',id);save();cerrarModal();
+  audit('CORREGIR ASIGNACION STOCK',id+' · '+motivo);save();cerrarModal();alert('Asignación corregida. El movimiento y su evidencia se conservaron en Firestore.');
  }catch(err){alert(err.message||mensajeFirebaseGMC(err));}
  finally{gmcMovimientoEnCurso=false;}
 };
 window.confirmarBorrarAsignacionUsuario=async(id)=>{
  try{
-  gmcExigirInventarioCentral();
-  const a=db.stockUsuarios.find(x=>x.id===id);
-  if(!a||a.estado!=='abierta'||asignacionVinculadaVenta(id))throw Error('La asignación no puede eliminarse.');
-  if(!await comprobarClaveAsignaciones(document.getElementById('borrarAsigClave')?.value||''))throw Error('Contraseña del administrador incorrecta.');
-  if(!confirm('¿Eliminar definitivamente la asignación y devolver su stock al inventario central?'))return;
-  const aRef=doc(firestoreGMC,'stockUsuarios',id),pRef=doc(firestoreGMC,'productos',a.productoId),mRef=doc(firestoreGMC,'movimientosInventario',uid());
+  const antigua=db.stockUsuarios.find(a=>a.id===id);
+  if(!asignacionSinConsumos(antigua))throw Error('Esta asignación tiene consumos o ya está cerrada. No puede anularse.');
+  const motivo=(document.getElementById('borrarAsigMotivo')?.value||'').trim();
+  if(!motivo||motivo.length>250)throw Error('Registre un motivo de anulación (hasta 250 caracteres).');
+  await gmcAutorizarMovimientoAsignacion(document.getElementById('borrarAsigClave')?.value||'');
+  if(!confirm('¿Anular la asignación y devolver el stock no vendido al inventario central? La evidencia quedará conservada.'))return;
+  const aRef=doc(firestoreGMC,'stockUsuarios',id),pRef=doc(firestoreGMC,'productos',antigua.productoId),mRef=doc(firestoreGMC,'movimientosInventario',uid());
   gmcMovimientoEnCurso=true;
   await runTransaction(firestoreGMC,async tx=>{
    const as=await tx.get(aRef),ps=await tx.get(pRef);
-   if(!as.exists()||!ps.exists())throw Error('La asignación o el producto ya no existe.');
-   const anterior=as.data();
-   if(anterior.estado!=='abierta'||Number(anterior.restante)!==Number(anterior.cantidad)||Number(anterior.devuelto||0)!==0)throw Error('Asignación con consumos o cambios recientes. No se eliminó.');
-   tx.update(pRef,{stock:gmcRedondear6(Number(ps.data().stock||0)+Number(anterior.restante)),unidadesAsignadas:gmcRedondear6(Number(ps.data().unidadesAsignadas||0)-Number(anterior.restante))});
-   tx.delete(aRef);
-   tx.set(mRef,{id:mRef.id,tipo:'eliminar_asignacion',asignacionId:id,fecha:new Date().toISOString(),usuarioId:firebaseAuthGMC.currentUser.uid});
+   if(!as.exists()||!ps.exists())throw Error('La asignación o el producto ya no existen.');
+   const anterior={...as.data(),id};
+   if(!asignacionSinConsumos(anterior)||anterior.usuarioId!==antigua.usuarioId||anterior.productoId!==antigua.productoId||Number(anterior.cantidad)!==Number(antigua.cantidad)||Number(anterior.revision||0)!==Number(antigua.revision||0))throw Error('Asignación con consumos o cambios concurrentes. No se anuló.');
+   const cantidad=Number(anterior.restante),revision=Number(anterior.revision||0)+1;
+   const despues={...anterior,restante:0,devuelto:cantidad,estado:'anulada',revision,ultimoMovimientoId:mRef.id};
+   tx.update(pRef,{stock:gmcRedondear6(Number(ps.data().stock||0)+cantidad),unidadesAsignadas:gmcRedondear6(Number(ps.data().unidadesAsignadas||0)-cantidad)});
+   tx.update(aRef,{restante:0,devuelto:cantidad,estado:'anulada',revision,ultimoMovimientoId:mRef.id});
+   tx.set(mRef,{id:mRef.id,tipo:'anulacion_asignacion',asignacionId:id,fecha:new Date().toISOString(),usuarioId:firebaseAuthGMC.currentUser.uid,autorizadoPor:firebaseAuthGMC.currentUser.uid,motivo,revision,antes:gmcResumenEvidenciaAsignacion(anterior),despues:gmcResumenEvidenciaAsignacion(despues)});
   });
-  audit('BORRAR ASIGNACION STOCK',id);save();cerrarModal();
+  audit('ANULAR ASIGNACION STOCK',id+' · '+motivo);save();cerrarModal();alert('Asignación anulada. Stock devuelto y evidencia preservada en Firestore.');
  }catch(err){alert(err.message||mensajeFirebaseGMC(err));}
  finally{gmcMovimientoEnCurso=false;}
+};
+window.verEvidenciaAsignacion=async id=>{
+ try{
+  gmcExigirInventarioCentral();
+  const datos=await getDocsFromServer(query(collection(firestoreGMC,'movimientosInventario'),where('asignacionId','==',id)));
+  const registros=datos.docs.map(d=>d.data()).sort((a,b)=>String(a.fecha||'').localeCompare(String(b.fecha||'')));
+  const campos=a=>a?`Vendedor: ${esc(a.usuario)} · Producto: ${esc(a.nombre)} · Entregado: ${Number(a.cantidad||0).toFixed(2)} · Restante: ${Number(a.restante||0).toFixed(2)} · Devuelto: ${Number(a.devuelto||0).toFixed(2)} · Estado: ${esc(a.estado)}`:'—';
+  openModal('Evidencia de asignación',`<p class="note">Registro de movimientos inmutables en Firestore. Asignación: ${esc(id)}</p>${registros.length?registros.map(r=>`<div class="card" style="margin:10px 0"><strong>${esc(r.tipo==='anulacion_asignacion'?'Anulación':'Edición')} · ${esc(r.fecha)}</strong><p>Administrador UID: ${esc(r.autorizadoPor||'')} · Motivo: ${esc(r.motivo||'')}</p><p><b>Antes:</b> ${campos(r.antes)}</p><p><b>Después:</b> ${campos(r.despues)}</p></div>`).join(''):'<p class="note">Sin correcciones posteriores registradas para esta asignación.</p>'}<button class="btn btn-light" onclick="cerrarModal()">Cerrar</button>`);
+ }catch(err){alert(err.message||mensajeFirebaseGMC(err));}
 };
 
 // ETAPA 5: ventas centralizadas. Compras, abonos, devoluciones, cierres y Caja Bancos aún no son centrales.
