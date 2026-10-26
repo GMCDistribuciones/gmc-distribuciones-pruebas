@@ -662,6 +662,17 @@
         <div class="actions" style="justify-content:space-between"><h3>Clientes</h3><button class="btn btn-primary" onclick="modalPersona('cliente')">+ Cliente</button></div>
         <div class="note" id="gmcAperturaPendienteClientes" style="display:none" aria-live="polite"></div>
         <p class="muted" id="gmcClientesEstado" style="font-size:12px" aria-live="polite">Esperando autenticación y conexión con Firestore…</p>
+        <!-- Orden manual de visitas: solo el administrador. Usa día/ruta existentes. -->
+        <div id="gmcOrdenVisitasAdmin" class="card" style="display:none;margin:12px 0;background:#f8fbff">
+          <h3>Orden de visita de clientes por día y ruta</h3>
+          <p class="note">El administrador determina la secuencia de visitas. Seleccione un día y una ruta, y utilice «Primero», «Subir» o «Bajar». El vendedor visualizará este mismo orden en Rutas. No cambia el día, la ruta, el vendedor ni las cuentas pendientes.</p>
+          <div class="toolbar" style="margin-top:10px">
+            <div><label>Día de visita</label><select id="gmcOrdenDia" onchange="gmcRenderOrdenVisitas()"><option value="">Seleccione el día</option><option>Lunes</option><option>Martes</option><option>Miércoles</option><option>Jueves</option><option>Viernes</option><option>Sábado</option><option>Domingo</option></select></div>
+            <div><label>Ruta</label><select id="gmcOrdenRuta" onchange="gmcRenderOrdenVisitas()"><option value="">Seleccione la ruta</option></select></div>
+          </div>
+          <p id="gmcOrdenEstado" class="muted" style="font-size:12px" aria-live="polite">Seleccione el día y la ruta para ordenar los clientes.</p>
+          <div class="table-wrap"><table><thead><tr><th>Visita</th><th>Cliente</th><th>Identificación</th><th>Vendedor asignado</th><th>Ordenar</th></tr></thead><tbody id="gmcOrdenTabla"></tbody></table></div>
+        </div>
         <div class="table-wrap"><table><thead><tr><th>Identificación</th><th>Nombre</th><th>Razón social</th><th>Ruta</th><th>Día de visita</th><th>Teléfono</th><th>Email</th><th>Dirección</th><th>Cuenta anterior pendiente</th><th></th></tr></thead><tbody id="tbClientes"></tbody></table></div>
       </div>
     </section>
@@ -691,7 +702,7 @@
         <p id="rutasResumen" class="muted" style="font-size:12px" aria-live="polite"></p>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Ruta</th><th>Nombre</th><th>Razón social</th><th>Identificación</th><th>Día</th><th>Vendedor</th><th>Teléfono</th><th>Dirección</th><th>Cuentas pendientes</th><th>Saldo por cobrar</th><th>Detalle de facturas</th></tr></thead>
+            <thead><tr><th>Ruta</th><th>Visita</th><th>Nombre</th><th>Razón social</th><th>Identificación</th><th>Día</th><th>Vendedor</th><th>Teléfono</th><th>Dirección</th><th>Cuentas pendientes</th><th>Saldo por cobrar</th><th>Detalle de facturas</th></tr></thead>
             <tbody id="rutasTablaClientes"></tbody>
           </table>
         </div>
@@ -1687,7 +1698,7 @@ async function guardarPersona(tipo,id){
  const nombreCliente=tipo==='cliente'?document.getElementById('perNombreCliente').value.trim():'';
  const razonSocial=tipo==='cliente'?document.getElementById('perRazonSocial').value.trim():'';
  let o={id:id||uid(),identificacion:perId.value.trim(),nombre:tipo==='cliente'?(nombreCliente||razonSocial):perNom.value.trim(),telefono:perTel.value.trim(),email:perMail.value.trim(),direccion:perDir.value.trim()};
- if(tipo==='cliente'){const ruta=perRuta.value.trim();if(ruta&&!/^[0-9]+$/.test(ruta))return alert('La ruta debe contener solamente dígitos');o.ruta=ruta;o.diaVisita=perDiaVisita.value;o.nombreCliente=nombreCliente;o.razonSocial=razonSocial;o.vendedorId=perVendedor.value;const usuarioAsignado=cargarUsuarios().find(u=>String(u.id)===o.vendedorId),anterior=db.clientes.find(c=>c.id===id);o.vendedorNombre=usuarioAsignado?.usuario||(o.vendedorId&&o.vendedorId===String(anterior?.vendedorId||'')?anterior?.vendedorNombre||'':'');}
+ if(tipo==='cliente'){const ruta=perRuta.value.trim();if(ruta&&!/^[0-9]+$/.test(ruta))return alert('La ruta debe contener solamente dígitos');o.ruta=ruta;o.diaVisita=perDiaVisita.value;o.nombreCliente=nombreCliente;o.razonSocial=razonSocial;o.vendedorId=perVendedor.value;const usuarioAsignado=cargarUsuarios().find(u=>String(u.id)===o.vendedorId),anterior=db.clientes.find(c=>c.id===id);o.vendedorNombre=usuarioAsignado?.usuario||(o.vendedorId&&o.vendedorId===String(anterior?.vendedorId||'')?anterior?.vendedorNombre||'':'');if(anterior&&(String(anterior.ruta||'').trim()!==ruta||String(anterior.diaVisita||'')!==o.diaVisita))o.ordenVisita=0;}
  if(tipo==='cliente'&&document.getElementById('perAperturaImporte')){
   const bruto=document.getElementById('perAperturaImporte').value.trim(),cantidad=Number(bruto);
   if(!bruto||!Number.isFinite(cantidad)||cantidad<0||Math.abs(cantidad*100-Math.round(cantidad*100))>0.000001)return alert('El saldo anterior debe ser válido y tener máximo dos decimales.');
@@ -1726,6 +1737,7 @@ async function guardarPersona(tipo,id){
 }
 function renderPersonas(){
  window.gmcMostrarPendienteApertura?.();
+ gmcRenderOrdenVisitas();
  tbClientes.innerHTML=db.clientes.map(p=>`<tr><td>${esc(p.identificacion)}</td><td>${esc(p.nombreCliente??(p.razonSocial?'':p.nombre||''))}</td><td>${esc(p.razonSocial||'')}</td><td>${esc(p.ruta||'')}</td><td>${esc(p.diaVisita||'')}</td><td>${esc(p.telefono)}</td><td>${esc(p.email)}</td><td>${esc(p.direccion)}</td><td>${p.carteraApertura?`<strong>${money(p.carteraApertura.saldo||0)}</strong>${gmcAperturaVencida(p)?`<span class="danger"> · VENCIDA</span>`:''}`:'—'}</td><td><div class="actions" style="flex-wrap:nowrap;gap:5px"><button class="btn btn-light" style="padding:7px 9px" title="Editar" aria-label="Editar cliente" onclick='modalPersona("cliente",${JSON.stringify(p)})'>✏️</button><button class="btn btn-light danger" style="padding:7px 9px" title="Borrar" aria-label="Borrar cliente" onclick="deleteBy('clientes','${p.id}')">🗑️</button></div></td></tr>`).join('')||`<tr><td colspan="10" class="empty">Sin clientes</td></tr>`;
  tbProveedores.innerHTML=db.proveedores.map(p=>`<tr><td>${esc(p.identificacion)}</td><td>${esc(p.nombre)}</td><td>${esc(p.telefono)}</td><td>${esc(p.email)}</td><td>${esc(p.direccion)}</td><td><div class="actions" style="flex-wrap:nowrap;gap:5px"><button class="btn btn-light" style="padding:7px 9px" title="Editar" aria-label="Editar proveedor" onclick='modalPersona("proveedor",${JSON.stringify(p)})'>✏️</button><button class="btn btn-light danger" style="padding:7px 9px" title="Borrar" aria-label="Borrar proveedor" onclick="deleteBy('proveedores','${p.id}')">🗑️</button></div></td></tr>`).join('')||`<tr><td colspan="6" class="empty">Sin proveedores</td></tr>`
 }
@@ -1827,6 +1839,55 @@ function renderAnaliticaCarteraPendiente(){
   grafico.innerHTML=`<h4 style="margin:0 0 8px">Gráfico explicativo</h4><p class="muted" style="font-size:12px;margin:0 0 8px">Distribución del saldo pendiente actual por fecha de emisión de la factura.</p>${graficoPastelAnalisis(fechas.map(x=>({label:x.fecha,valor:x.saldo})),money,'Sin cartera pendiente para graficar')}`;
 }
 
+// ORDEN DE VISITAS: lectura compartida para rutas y panel administrativo.
+// Los registros antiguos sin orden conservan una posición alfabética al final.
+const gmcDiasSemanaOrden=['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
+function gmcClaveGrupoOrdenVisitas(c){
+ return String(c.diaVisita||'').trim().normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase()+'|'+String(c.ruta||'').trim();
+}
+function gmcCompararOrdenVisitas(a,b){
+ const ruta=String(a.ruta||'').localeCompare(String(b.ruta||''),'es',{numeric:true});
+ if(ruta)return ruta;
+ const diaA=gmcDiasSemanaOrden.findIndex(d=>d===a.diaVisita);
+ const diaB=gmcDiasSemanaOrden.findIndex(d=>d===b.diaVisita);
+ if(diaA!==diaB)return (diaA<0?7:diaA)-(diaB<0?7:diaB);
+ const orden=c=>Number.isSafeInteger(Number(c.ordenVisita))&&Number(c.ordenVisita)>0?Number(c.ordenVisita):Number.MAX_SAFE_INTEGER;
+ return orden(a)-orden(b)||String(a.nombreCliente||a.razonSocial||a.nombre||'').localeCompare(String(b.nombreCliente||b.razonSocial||b.nombre||''),'es')||String(a.id).localeCompare(String(b.id));
+}
+let gmcOrdenVistaClientes=[];
+let gmcOrdenGuardando=false;
+function gmcRenderOrdenVisitas(){
+ const panel=document.getElementById('gmcOrdenVisitasAdmin');
+ const dia=document.getElementById('gmcOrdenDia');
+ const ruta=document.getElementById('gmcOrdenRuta');
+ const tabla=document.getElementById('gmcOrdenTabla');
+ const estado=document.getElementById('gmcOrdenEstado');
+ if(!panel||!dia||!ruta||!tabla||!estado)return;
+ const permitido=!!window.gmcPuedeOrdenarVisitas?.();
+ panel.style.display=permitido?'':'none';
+ if(!permitido){gmcOrdenVistaClientes=[];tabla.innerHTML='';return;}
+ const rutas=[...new Set((db.clientes||[]).filter(c=>c.diaVisita===dia.value).map(c=>String(c.ruta||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'es',{numeric:true}));
+ const actual=ruta.value;
+ ruta.innerHTML='<option value="">Seleccione la ruta</option>'+rutas.map(r=>`<option value="${esc(r)}">${esc(r)}</option>`).join('');
+ if(rutas.includes(actual))ruta.value=actual;
+ if(!dia.value||!ruta.value){
+  gmcOrdenVistaClientes=[];
+  tabla.innerHTML='<tr><td colspan="5" class="empty">Seleccione día y ruta para establecer el recorrido.</td></tr>';
+  if(!gmcOrdenGuardando)estado.textContent='Seleccione un día y una ruta con clientes asignados.';
+  return;
+ }
+ gmcOrdenVistaClientes=(db.clientes||[]).filter(c=>c.diaVisita===dia.value&&String(c.ruta||'').trim()===ruta.value).sort(gmcCompararOrdenVisitas);
+ const usuarios=new Map(cargarUsuarios().map(u=>[String(u.id),u.usuario]));
+ tabla.innerHTML=gmcOrdenVistaClientes.map((c,i)=>`<tr>
+  <td><strong>${i+1}</strong></td><td>${esc(c.nombreCliente||c.razonSocial||c.nombre||'—')}</td>
+  <td>${esc(c.identificacion||'—')}</td><td>${esc(usuarios.get(String(c.vendedorId))||c.vendedorNombre||'Sin asignar')}</td>
+  <td><div class="actions" style="gap:4px;flex-wrap:wrap">
+   <button type="button" class="btn btn-light" style="padding:6px" ${i===0||gmcOrdenGuardando?'disabled':''} onclick="gmcMoverOrdenVisita(${i},'primero')">Primero</button>
+   <button type="button" class="btn btn-light" style="padding:6px" ${i===0||gmcOrdenGuardando?'disabled':''} onclick="gmcMoverOrdenVisita(${i},'subir')">↑ Subir</button>
+   <button type="button" class="btn btn-light" style="padding:6px" ${i===gmcOrdenVistaClientes.length-1||gmcOrdenGuardando?'disabled':''} onclick="gmcMoverOrdenVisita(${i},'bajar')">↓ Bajar</button>
+  </div></td></tr>`).join('')||'<tr><td colspan="5" class="empty">No hay clientes para este día y ruta.</td></tr>';
+ if(!gmcOrdenGuardando)estado.textContent=gmcOrdenVistaClientes.length+' cliente(s) · '+dia.value+' · Ruta '+ruta.value+'. El orden se guarda en Cloud Firestore al mover un cliente.';
+}
 // Rutas: consulta sin escrituras. Los vendedores ven solo sus clientes asignados.
 function renderRutas(){
   const diaSel=document.getElementById('rutasFiltroDia');
@@ -1885,7 +1946,7 @@ function renderRutas(){
   }
   const filtroRuta=numeroSel.value;
   const clientes=clientesBase.filter(c=>!filtroRuta||(filtroRuta==='__sin_ruta__'?!c.ruta:String(c.ruta||'')===filtroRuta))
-    .sort((a,b)=>String(a.ruta||'').localeCompare(String(b.ruta||''),'es',{numeric:true})||String(a.nombreCliente||a.razonSocial||a.nombre||'').localeCompare(String(b.nombreCliente||b.razonSocial||b.nombre||''),'es'));
+    .sort(gmcCompararOrdenVisitas);
 
   // Vincular crédito por ID del cliente; ventas antiguas sin ID solo por nombre inequívoco.
   const idsClientes=new Set((db.clientes||[]).map(c=>String(c.id)));
@@ -1910,15 +1971,19 @@ function renderRutas(){
   }
   let pendientes=0,vencidos=0,conSaldo=0,facturas=0;
   const nombresUsuarios=new Map(usuarios.map(u=>[String(u.id),u.usuario]));
+  const secuenciaPorRutaDia=new Map();
   tabla.innerHTML=clientes.map(c=>{
+    const grupoVisita=gmcClaveGrupoOrdenVisitas(c);
+    const numeroVisita=(secuenciaPorRutaDia.get(grupoVisita)||0)+1;
+    secuenciaPorRutaDia.set(grupoVisita,numeroVisita);
     const creditos=(creditosPorCliente.get(String(c.id))||[]).slice().sort((a,b)=>String(a.fecha||'').localeCompare(String(b.fecha||'')));
     const saldo=creditos.reduce((sum,v)=>sum+saldoCredito(v),0);
     const vencido=creditos.filter(creditoVencido).reduce((sum,v)=>sum+saldoCredito(v),0);
     pendientes+=saldo;vencidos+=vencido;facturas+=creditos.length;if(saldo>0)conSaldo++;
     const vendedor=c.vendedorId?(nombresUsuarios.get(String(c.vendedorId))||c.vendedorNombre||'Usuario no registrado'):'Sin asignar';
     const detalle=creditos.length?`<details><summary style="cursor:pointer;color:var(--azul2);font-weight:700">Ver ${creditos.length} factura(s)</summary><div class="table-wrap" style="margin-top:8px"><table><thead><tr><th>Factura</th><th>Fecha</th><th>Vencimiento</th><th>Saldo</th><th>Estado</th></tr></thead><tbody>${creditos.map(v=>`<tr><td>${esc(v.numero||'S/N')}</td><td>${esc(v.fecha||'—')}</td><td>${esc(v.fechaVencimiento||fechaVencimientoCredito(v.fecha)||'—')}</td><td>${money(saldoCredito(v))}</td><td>${creditoVencido(v)?'<span class="danger">Vencida</span>':'Pendiente'}</td></tr>`).join('')}</tbody></table></div></details>`:'—';
-    return `<tr><td>${esc(c.ruta||'—')}</td><td>${esc(c.nombreCliente??(c.razonSocial?'':c.nombre||''))}</td><td>${esc(c.razonSocial||'')}</td><td>${esc(c.identificacion||'')}</td><td>${esc(c.diaVisita||'—')}</td><td>${esc(vendedor)}</td><td>${esc(c.telefono||'')}</td><td>${esc(c.direccion||'')}</td><td>${creditos.length}</td><td><strong class="${saldo>0?'danger':''}">${money(saldo)}</strong></td><td>${detalle}</td></tr>`;
-  }).join('')||'<tr><td colspan="11" class="empty">No hay clientes asignados para los filtros seleccionados.</td></tr>';
+    return `<tr><td>${esc(c.ruta||'—')}</td><td><strong>${numeroVisita}</strong></td><td>${esc(c.nombreCliente??(c.razonSocial?'':c.nombre||''))}</td><td>${esc(c.razonSocial||'')}</td><td>${esc(c.identificacion||'')}</td><td>${esc(c.diaVisita||'—')}</td><td>${esc(vendedor)}</td><td>${esc(c.telefono||'')}</td><td>${esc(c.direccion||'')}</td><td>${creditos.length}</td><td><strong class="${saldo>0?'danger':''}">${money(saldo)}</strong></td><td>${detalle}</td></tr>`;
+  }).join('')||'<tr><td colspan="12" class="empty">No hay clientes asignados para los filtros seleccionados.</td></tr>';
   document.getElementById('rutasCantidadClientes').textContent=clientes.length;
   document.getElementById('rutasClientesDeudores').textContent=conSaldo;
   document.getElementById('rutasTotalPendiente').textContent=money(pendientes);
@@ -4409,6 +4474,58 @@ function gmcMaestroPuedeEscribir(tipo, accion='guardar'){
  if(tipo==='clientes'&&accion!=='crear'&&!adminAutenticado&&!gmcAdminClienteSecundario)throw Error('Para editar o borrar un cliente, autorice primero al administrador Firebase.');
 }
 // Firebase administra permisos de forma independiente a las comprobaciones del HTML.
+// ORDEN DE VISITA: escritura exclusiva del administrador Firebase y transacción
+// que modifica solamente ordenVisita, conservando la deuda, saldo y datos del cliente.
+window.gmcPuedeOrdenarVisitas=()=>!!adminAutenticado&&firebaseRolGMC==='admin'&&!!firebaseAuthGMC.currentUser;
+window.gmcMoverOrdenVisita=async(indice,accion)=>{
+ if(gmcOrdenGuardando)return;
+ if(!adminAutenticado||firebaseRolGMC!=='admin'||!firebaseAuthGMC.currentUser)return alert('Solo el administrador Firebase puede ordenar las visitas.');
+ const dia=document.getElementById('gmcOrdenDia')?.value;
+ const ruta=document.getElementById('gmcOrdenRuta')?.value;
+ if(!dia||!ruta||!gmcMasterListos.clientes||!navigator.onLine)return alert('Seleccione día y ruta y espere que Clientes se sincronice con Firestore.');
+ const original=gmcOrdenVistaClientes.slice();
+ if(!Number.isInteger(indice)||indice<0||indice>=original.length||!['primero','subir','bajar'].includes(accion))return;
+ const destino=accion==='primero'?0:accion==='subir'?indice-1:indice+1;
+ if(destino<0||destino>=original.length||destino===indice)return;
+ if(original.length>400)return alert('La ruta supera 400 clientes; no se realizó el cambio para evitar una transacción demasiado grande.');
+ const secuencia=original.slice();
+ const [seleccionado]=secuencia.splice(indice,1);
+ secuencia.splice(destino,0,seleccionado);
+ const estado=document.getElementById('gmcOrdenEstado');
+ gmcOrdenGuardando=true;
+ let resultado='';
+ if(estado)estado.textContent='Guardando el nuevo orden de visitas en Firestore…';
+ gmcRenderOrdenVisitas();
+ try{
+  await runTransaction(firestoreGMC,async tx=>{
+   // Firestore exige ejecutar todas las lecturas antes de las escrituras.
+   const lecturas=[];
+   for(const c of secuencia){
+    const referencia=doc(firestoreGMC,'clientes',String(c.id));
+    lecturas.push({referencia,local:c,snapshot:await tx.get(referencia)});
+   }
+   for(const fila of lecturas){
+    const remoto=fila.snapshot.data();
+    if(!fila.snapshot.exists()||remoto.diaVisita!==dia||String(remoto.ruta||'').trim()!==ruta||
+       Number(remoto.ordenVisita||0)!==Number(fila.local.ordenVisita||0)){
+      throw Error('El orden o la ruta cambió en otro dispositivo. Actualice el listado y vuelva a intentarlo.');
+    }
+   }
+   for(let i=0;i<lecturas.length;i++){
+    if(Number(lecturas[i].snapshot.data().ordenVisita||0)!==i+1){
+      tx.update(lecturas[i].referencia,{ordenVisita:i+1});
+    }
+   }
+  });
+  resultado='Orden guardado en Cloud Firestore. Los vendedores lo verán al actualizarse Rutas.';
+ }catch(err){
+  resultado='No se pudo guardar el orden: '+(err?.message||'Error de Firestore');
+ }finally{
+  gmcOrdenGuardando=false;
+  gmcRenderOrdenVisitas();
+  if(estado)estado.textContent=resultado;
+ }
+};
 window.gmcGuardarMaestroFirebase=async(tipo,registro)=>{
  if(!['productos','clientes'].includes(tipo))throw Error('Colección no autorizada.');
  const anterior=db[tipo].some(p=>p.id===registro.id);
