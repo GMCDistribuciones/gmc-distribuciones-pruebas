@@ -346,7 +346,7 @@
     <section id="carteraPendiente" class="section">
       <div class="card">
         <h3>💳 Cartera pendiente</h3>
-        <p class="muted" style="font-size:12px">Facturas a crédito con saldo pendiente actual. Las fechas filtran la emisión de la factura; el día de atención y el vendedor responsable provienen de la ficha del cliente. Si no hay vendedor asignado, se muestra quien realizó la venta.</p>
+        <p class="muted" style="font-size:12px">Ventas a crédito y deudas anteriores con saldo pendiente actual. Las fechas filtran la emisión u origen del documento; el día de atención y el vendedor responsable provienen de la ficha del cliente. Si no hay vendedor asignado, se muestra quien realizó la venta.</p>
         <div class="toolbar">
           <div><label>Factura desde</label><input type="date" id="cpDesde" onchange="renderCarteraPendiente('cp')"></div>
           <div><label>Factura hasta</label><input type="date" id="cpHasta" onchange="renderCarteraPendiente('cp')"></div>
@@ -660,8 +660,9 @@
     <section id="clientes" class="section">
       <div class="card">
         <div class="actions" style="justify-content:space-between"><h3>Clientes</h3><button class="btn btn-primary" onclick="modalPersona('cliente')">+ Cliente</button></div>
+        <div class="note" id="gmcAperturaPendienteClientes" style="display:none" aria-live="polite"></div>
         <p class="muted" id="gmcClientesEstado" style="font-size:12px" aria-live="polite">Esperando autenticación y conexión con Firestore…</p>
-        <div class="table-wrap"><table><thead><tr><th>Identificación</th><th>Nombre</th><th>Razón social</th><th>Ruta</th><th>Día de visita</th><th>Teléfono</th><th>Email</th><th>Dirección</th><th></th></tr></thead><tbody id="tbClientes"></tbody></table></div>
+        <div class="table-wrap"><table><thead><tr><th>Identificación</th><th>Nombre</th><th>Razón social</th><th>Ruta</th><th>Día de visita</th><th>Teléfono</th><th>Email</th><th>Dirección</th><th>Cuenta anterior pendiente</th><th></th></tr></thead><tbody id="tbClientes"></tbody></table></div>
       </div>
     </section>
 
@@ -669,7 +670,7 @@
     <section id="rutas" class="section">
       <div class="card">
         <h3>🗺️ Rutas · Plan de visitas</h3>
-        <p class="muted" style="font-size:12px">Clientes organizados según su día de visita, su ruta y el vendedor asignado en Clientes. Las cuentas pendientes muestran únicamente ventas a crédito con saldo por cobrar.</p>
+        <p class="muted" style="font-size:12px">Clientes organizados según su día de visita, su ruta y el vendedor asignado en Clientes. Las cuentas pendientes incluyen ventas a crédito y deudas anteriores con saldo por cobrar.</p>
         <div class="toolbar" style="margin-top:12px">
           <div><label>Día de visita</label><select id="rutasFiltroDia" onchange="renderRutas()">
             <option value="">Todos los días</option>
@@ -865,11 +866,12 @@
     </section>
     <section id="misCreditos" class="section">
       <div class="card">
-        <h3>💳 Mis ventas a crédito pendientes</h3>
-        <p class="note">Consulte las ventas a crédito realizadas con su usuario, registre los abonos recibidos de sus clientes y salde sus cuentas pendientes.</p>
+        <h3>💳 Mis créditos y deudas anteriores pendientes</h3>
+        <p class="note">Consulte sus ventas a crédito y las deudas anteriores de los clientes asignados. Registre los cobros sin convertir una deuda anterior en venta.</p>
         <div class="toolbar">
           <div style="flex:1;max-width:420px"><label>Buscar cliente o número de venta</label><input id="misCreditosBuscar" type="search" placeholder="Cliente o número de venta" oninput="renderMisCreditos()"></div>
         </div>
+        <div class="note" id="gmcAperturaPendienteMisCreditos" style="display:none" aria-live="polite"></div>
         <div class="note" id="gmcAbonoPendienteMisCreditos" style="display:none;margin:10px 0" aria-live="polite"></div>
         <p id="misCreditosResumen" class="muted" style="font-size:13px"></p>
         <div class="table-wrap"><table><thead><tr><th>Fecha</th><th>Venta</th><th>Cliente</th><th>Total</th><th>Abonado</th><th>Saldo pendiente</th><th>Vencimiento</th><th>Acciones</th></tr></thead><tbody id="tbMisCreditos"></tbody></table></div>
@@ -1673,7 +1675,11 @@ function modalPersona(tipo,p=null){
  <div class="c4"><label>Dirección</label><input id="perDir" value="${esc(p?.direccion||'')}"></div>
  ${isC?`<div class="c4"><label>Ruta</label><input id="perRuta" type="text" inputmode="numeric" pattern="[0-9]+" placeholder="Ruta" value="${esc(p?.ruta||'')}" oninput="this.value=this.value.replace(/[^0-9]/g,'')"></div>
  <div class="c4"><label>Día de visita</label><select id="perDiaVisita"><option value="">Seleccione un día</option>${['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'].map(d=>`<option value="${d}" ${p?.diaVisita===d?'selected':''}>${d}</option>`).join('')}</select></div>
- <div class="c4"><label>Vendedor / usuario</label><select id="perVendedor">${opcionesVendedores}</select></div>`:''}
+ <div class="c4"><label>Vendedor / usuario</label><select id="perVendedor">${opcionesVendedores}</select></div>
+ ${adminAutenticado&&!p?.carteraApertura?`<div class="c12" style="border-top:1px solid #e4e7ec;padding-top:10px"><strong>Cuenta pendiente anterior (opcional)</strong><p class="note">Solo para saldo por cobrar existente ANTES de registrar el cliente en GMC. No genera una venta, no mueve inventario ni registra efectivo. Requiere seleccionar al vendedor responsable.</p></div>
+ <div class="c4"><label>Saldo anterior ($)</label><input id="perAperturaImporte" type="number" min="0" step="0.01" value="0"></div>
+ <div class="c4"><label>Fecha del documento original</label><input id="perAperturaFecha" type="date"></div>
+ <div class="c4"><label>Fecha de vencimiento original</label><input id="perAperturaVence" type="date"></div>`:p?.carteraApertura?`<div class="c12 note"><strong>Deuda anterior ya registrada:</strong> ${money(p.carteraApertura.importe||0)} · Saldo por cobrar: ${money(p.carteraApertura.saldo||0)}. La deuda se conserva al editar los datos del cliente; no se vuelve a crear.</div>`:''}`:''}
  </div><button class="btn btn-primary" style="margin-top:12px" onclick="guardarPersona('${tipo}','${p?.id||''}')">Guardar</button>`)
 }
 async function guardarPersona(tipo,id){
@@ -1682,6 +1688,18 @@ async function guardarPersona(tipo,id){
  const razonSocial=tipo==='cliente'?document.getElementById('perRazonSocial').value.trim():'';
  let o={id:id||uid(),identificacion:perId.value.trim(),nombre:tipo==='cliente'?(nombreCliente||razonSocial):perNom.value.trim(),telefono:perTel.value.trim(),email:perMail.value.trim(),direccion:perDir.value.trim()};
  if(tipo==='cliente'){const ruta=perRuta.value.trim();if(ruta&&!/^[0-9]+$/.test(ruta))return alert('La ruta debe contener solamente dígitos');o.ruta=ruta;o.diaVisita=perDiaVisita.value;o.nombreCliente=nombreCliente;o.razonSocial=razonSocial;o.vendedorId=perVendedor.value;const usuarioAsignado=cargarUsuarios().find(u=>String(u.id)===o.vendedorId),anterior=db.clientes.find(c=>c.id===id);o.vendedorNombre=usuarioAsignado?.usuario||(o.vendedorId&&o.vendedorId===String(anterior?.vendedorId||'')?anterior?.vendedorNombre||'':'');}
+ if(tipo==='cliente'&&document.getElementById('perAperturaImporte')){
+  const bruto=document.getElementById('perAperturaImporte').value.trim(),cantidad=Number(bruto);
+  if(!bruto||!Number.isFinite(cantidad)||cantidad<0||Math.abs(cantidad*100-Math.round(cantidad*100))>0.000001)return alert('El saldo anterior debe ser válido y tener máximo dos decimales.');
+  if(cantidad>0){
+   const fecha=document.getElementById('perAperturaFecha').value,vence=document.getElementById('perAperturaVence').value;
+   if(!o.vendedorId)return alert('Seleccione el vendedor que recuperará la deuda anterior.');
+   if(!/^\d{4}-\d{2}-\d{2}$/.test(fecha)||!/^\d{4}-\d{2}-\d{2}$/.test(vence)||vence<fecha||fecha>fechaSistemaCierre())return alert('Indique fecha original y vencimiento válidos. El vencimiento no puede preceder al documento.');
+   const importe=Math.round(cantidad*100)/100;
+   if(!confirm('¿Registrar '+money(importe)+' como DEUDA ANTERIOR de '+o.nombre+' para recuperar por '+(o.vendedorNombre||'vendedor asignado')+'? No será una venta ni un ingreso en caja.'))return;
+   o.carteraApertura={tipo:'cartera_anterior',importe,saldo:importe,fecha,vencimiento:vence,abonos:[]};
+  }
+ }
  if(!o.nombre)return alert(tipo==='cliente'?'Ingrese el nombre o la razón social':'Ingrese el nombre');
  if(tipo==='cliente'){
   const boton=document.querySelector('#modalBody button[onclick^="guardarPersona"]');
@@ -1707,9 +1725,26 @@ async function guardarPersona(tipo,id){
  }
 }
 function renderPersonas(){
- tbClientes.innerHTML=db.clientes.map(p=>`<tr><td>${esc(p.identificacion)}</td><td>${esc(p.nombreCliente??(p.razonSocial?'':p.nombre||''))}</td><td>${esc(p.razonSocial||'')}</td><td>${esc(p.ruta||'')}</td><td>${esc(p.diaVisita||'')}</td><td>${esc(p.telefono)}</td><td>${esc(p.email)}</td><td>${esc(p.direccion)}</td><td><div class="actions" style="flex-wrap:nowrap;gap:5px"><button class="btn btn-light" style="padding:7px 9px" title="Editar" aria-label="Editar cliente" onclick='modalPersona("cliente",${JSON.stringify(p)})'>✏️</button><button class="btn btn-light danger" style="padding:7px 9px" title="Borrar" aria-label="Borrar cliente" onclick="deleteBy('clientes','${p.id}')">🗑️</button></div></td></tr>`).join('')||`<tr><td colspan="9" class="empty">Sin clientes</td></tr>`;
+ window.gmcMostrarPendienteApertura?.();
+ tbClientes.innerHTML=db.clientes.map(p=>`<tr><td>${esc(p.identificacion)}</td><td>${esc(p.nombreCliente??(p.razonSocial?'':p.nombre||''))}</td><td>${esc(p.razonSocial||'')}</td><td>${esc(p.ruta||'')}</td><td>${esc(p.diaVisita||'')}</td><td>${esc(p.telefono)}</td><td>${esc(p.email)}</td><td>${esc(p.direccion)}</td><td>${p.carteraApertura?`<strong>${money(p.carteraApertura.saldo||0)}</strong>${gmcAperturaVencida(p)?`<span class="danger"> · VENCIDA</span>`:''}`:'—'}</td><td><div class="actions" style="flex-wrap:nowrap;gap:5px"><button class="btn btn-light" style="padding:7px 9px" title="Editar" aria-label="Editar cliente" onclick='modalPersona("cliente",${JSON.stringify(p)})'>✏️</button><button class="btn btn-light danger" style="padding:7px 9px" title="Borrar" aria-label="Borrar cliente" onclick="deleteBy('clientes','${p.id}')">🗑️</button></div></td></tr>`).join('')||`<tr><td colspan="10" class="empty">Sin clientes</td></tr>`;
  tbProveedores.innerHTML=db.proveedores.map(p=>`<tr><td>${esc(p.identificacion)}</td><td>${esc(p.nombre)}</td><td>${esc(p.telefono)}</td><td>${esc(p.email)}</td><td>${esc(p.direccion)}</td><td><div class="actions" style="flex-wrap:nowrap;gap:5px"><button class="btn btn-light" style="padding:7px 9px" title="Editar" aria-label="Editar proveedor" onclick='modalPersona("proveedor",${JSON.stringify(p)})'>✏️</button><button class="btn btn-light danger" style="padding:7px 9px" title="Borrar" aria-label="Borrar proveedor" onclick="deleteBy('proveedores','${p.id}')">🗑️</button></div></td></tr>`).join('')||`<tr><td colspan="6" class="empty">Sin proveedores</td></tr>`
 }
+// Cartera anterior de apertura: deuda previa del cliente, SIN ventas ni consumo de stock.
+function gmcCarteraAperturaVentas(){
+ return (db.clientes||[]).filter(c=>c.carteraApertura&&Number(c.carteraApertura.saldo)>0&&(adminAutenticado||!usuarioActual||String(c.vendedorId)===String(usuarioActual.id))).map(c=>{
+  const d=c.carteraApertura,abonos=Array.isArray(d.abonos)?d.abonos:[];
+  return {id:'gmc_apertura_'+c.id,origenCartera:'apertura',numero:'DEUDA ANTERIOR',fecha:d.fecha,
+   fechaVencimiento:d.vencimiento,terceroId:c.id,tercero:c.nombre||'',
+   usuarioVentaId:c.vendedorId||'',usuarioVenta:c.vendedorNombre||'',formaPago:'credito',
+   total:Number(d.importe),abono:Math.round((Number(d.importe)-Number(d.saldo))*100)/100,
+   saldo:Number(d.saldo),abonoInicial:0,abonosPosteriores:abonos};
+ });
+}
+function gmcAperturaVencida(c){
+ const d=c?.carteraApertura;
+ return !!d&&Number(d.saldo)>0&&/^\d{4}-\d{2}-\d{2}$/.test(d.vencimiento||'')&&fechaSistemaCierre()>=d.vencimiento;
+}
+function gmcDeudaPorId(id){return db.clientes.find(c=>id==='gmc_apertura_'+c.id);}
 // Consulta compartida de cartera pendiente; solo lectura de las ventas y fichas de clientes.
 function registrosCarteraPendiente(){
   const norm=x=>String(x||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().toLocaleLowerCase('es');
@@ -1722,7 +1757,7 @@ function registrosCarteraPendiente(){
     }
   }
   const usuarios=new Map(cargarUsuarios().map(u=>[String(u.id),u.usuario]));
-  return (db.ventas||[]).filter(v=>v.formaPago==='credito'&&!esDevuelta(v.id)&&saldoCredito(v)>0).map(v=>{
+  return [...(db.ventas||[]),...gmcCarteraAperturaVentas()].filter(v=>v.formaPago==='credito'&&!esDevuelta(v.id)&&saldoCredito(v)>0).map(v=>{
     let c=clientes.get(String(v.terceroId||''));
     // Para ventas antiguas sin ID, usar el nombre solo cuando no sea ambiguo.
     if(!c&&!v.terceroId){const posibles=alias.get(norm(v.tercero));if(posibles?.size===1)c=clientes.get([...posibles][0]);}
@@ -1759,7 +1794,7 @@ function renderCarteraPendiente(prefijo){
   document.getElementById(prefijo+'Resumen').textContent=lista.length+' factura(s) pendientes · '+clientes.size+' cliente(s) · saldo actual '+money(saldo)+(desde.value||hasta.value?' · fechas de emisión filtradas':'');
   tabla.innerHTML=lista.map(r=>{
     const v=r.venta,c=r.cliente;
-    return `<tr><td>${esc(v.numero||'S/N')}</td><td>${esc(v.fecha||'—')}</td><td>${esc(c?.razonSocial||c?.nombreCliente||c?.nombre||v.tercero||'—')}</td><td>${esc(c?.identificacion||'—')}</td><td>${esc(r.vendedor)}</td><td>${esc(r.dia||'Sin asignar')}</td><td>${esc(r.ruta||'—')}</td><td>${esc(fechaVencimientoCredito(v.fecha)||'—')}</td><td>${money(v.total)}</td><td>${money(resumenAbonosVentaCredito(v).total)}</td><td><strong class="danger">${money(r.saldo)}</strong></td><td>${creditoVencido(v)?'<span class="danger">Vencida</span>':'Pendiente'}</td><td><button class="btn btn-success" onclick="abrirAbonoCredito('${esc(v.id)}')">Abonar</button></td></tr>`;
+    return `<tr><td>${esc(v.numero||'S/N')}</td><td>${esc(v.fecha||'—')}</td><td>${esc(c?.razonSocial||c?.nombreCliente||c?.nombre||v.tercero||'—')}</td><td>${esc(c?.identificacion||'—')}</td><td>${esc(r.vendedor)}</td><td>${esc(r.dia||'Sin asignar')}</td><td>${esc(r.ruta||'—')}</td><td>${esc(v.fechaVencimiento||fechaVencimientoCredito(v.fecha)||'—')}</td><td>${money(v.total)}</td><td>${money(resumenAbonosVentaCredito(v).total)}</td><td><strong class="danger">${money(r.saldo)}</strong></td><td>${creditoVencido(v)?'<span class="danger">Vencida</span>':'Pendiente'}</td><td><button class="btn btn-success" onclick="abrirAbonoCredito('${esc(v.id)}')">Abonar</button></td></tr>`;
   }).join('')||'<tr><td colspan="13" class="empty">Sin facturas pendientes para los filtros seleccionados.</td></tr>';
 }
 
@@ -1862,7 +1897,7 @@ function renderRutas(){
     }
   }
   const creditosPorCliente=new Map();
-  for(const v of (db.ventas||[])){
+  for(const v of [...(db.ventas||[]),...gmcCarteraAperturaVentas()]){
     if(v.formaPago!=='credito'||esDevuelta(v.id)||saldoCredito(v)<=0)continue;
     let id=String(v.terceroId||'');
     if(!id){
@@ -1881,7 +1916,7 @@ function renderRutas(){
     const vencido=creditos.filter(creditoVencido).reduce((sum,v)=>sum+saldoCredito(v),0);
     pendientes+=saldo;vencidos+=vencido;facturas+=creditos.length;if(saldo>0)conSaldo++;
     const vendedor=c.vendedorId?(nombresUsuarios.get(String(c.vendedorId))||c.vendedorNombre||'Usuario no registrado'):'Sin asignar';
-    const detalle=creditos.length?`<details><summary style="cursor:pointer;color:var(--azul2);font-weight:700">Ver ${creditos.length} factura(s)</summary><div class="table-wrap" style="margin-top:8px"><table><thead><tr><th>Factura</th><th>Fecha</th><th>Vencimiento</th><th>Saldo</th><th>Estado</th></tr></thead><tbody>${creditos.map(v=>`<tr><td>${esc(v.numero||'S/N')}</td><td>${esc(v.fecha||'—')}</td><td>${esc(fechaVencimientoCredito(v.fecha)||'—')}</td><td>${money(saldoCredito(v))}</td><td>${creditoVencido(v)?'<span class="danger">Vencida</span>':'Pendiente'}</td></tr>`).join('')}</tbody></table></div></details>`:'—';
+    const detalle=creditos.length?`<details><summary style="cursor:pointer;color:var(--azul2);font-weight:700">Ver ${creditos.length} factura(s)</summary><div class="table-wrap" style="margin-top:8px"><table><thead><tr><th>Factura</th><th>Fecha</th><th>Vencimiento</th><th>Saldo</th><th>Estado</th></tr></thead><tbody>${creditos.map(v=>`<tr><td>${esc(v.numero||'S/N')}</td><td>${esc(v.fecha||'—')}</td><td>${esc(v.fechaVencimiento||fechaVencimientoCredito(v.fecha)||'—')}</td><td>${money(saldoCredito(v))}</td><td>${creditoVencido(v)?'<span class="danger">Vencida</span>':'Pendiente'}</td></tr>`).join('')}</tbody></table></div></details>`:'—';
     return `<tr><td>${esc(c.ruta||'—')}</td><td>${esc(c.nombreCliente??(c.razonSocial?'':c.nombre||''))}</td><td>${esc(c.razonSocial||'')}</td><td>${esc(c.identificacion||'')}</td><td>${esc(c.diaVisita||'—')}</td><td>${esc(vendedor)}</td><td>${esc(c.telefono||'')}</td><td>${esc(c.direccion||'')}</td><td>${creditos.length}</td><td><strong class="${saldo>0?'danger':''}">${money(saldo)}</strong></td><td>${detalle}</td></tr>`;
   }).join('')||'<tr><td colspan="11" class="empty">No hay clientes asignados para los filtros seleccionados.</td></tr>';
   document.getElementById('rutasCantidadClientes').textContent=clientes.length;
@@ -2682,19 +2717,19 @@ function fechaVencimientoCredito(fecha){
 }
 function creditoVencido(v){
   if(v.formaPago!=='credito'||esDevuelta(v.id)||saldoCredito(v)<=0)return false;
-  const limite=fechaVencimientoCredito(v.fecha);
+  const limite=v.fechaVencimiento||fechaVencimientoCredito(v.fecha);
   const ahora=new Date();
   const hoyLocal=[ahora.getFullYear(),String(ahora.getMonth()+1).padStart(2,'0'),String(ahora.getDate()).padStart(2,'0')].join('-');
   return !!limite&&hoyLocal>=limite;
 }
-function creditosVencidos(){return db.ventas.filter(creditoVencido)}
+function creditosVencidos(){return [...db.ventas,...gmcCarteraAperturaVentas()].filter(creditoVencido)}
 function renderAlertaCarteraVentas(){
   const el=document.getElementById('alertaCarteraVentas');if(!el)return;
   const vencidas=creditosVencidos();
   el.style.display=vencidas.length?'':'none';
   if(!vencidas.length){el.innerHTML='';return}
   const total=vencidas.reduce((a,v)=>a+saldoCredito(v),0);
-  el.innerHTML=`<strong>⚠️ Cartera vencida: ${vencidas.length} venta(s) a crédito · ${money(total)} pendientes</strong>${vencidas.slice(0,3).map(v=>`<div>${esc(v.tercero)} · Venta ${esc(v.numero||'S/N')} · Fecha ${esc(v.fecha)} · Saldo ${money(saldoCredito(v))}</div>`).join('')}${vencidas.length>3?`<div>Y ${vencidas.length-3} más. Consulte Historial de ventas en Administrador.</div>`:''}`;
+  el.innerHTML=`<strong>⚠️ Cartera vencida: ${vencidas.length} cuenta(s) a crédito · ${money(total)} pendientes</strong>${vencidas.slice(0,3).map(v=>`<div>${esc(v.tercero)} · ${esc(v.numero||'S/N')} · Fecha ${esc(v.fecha)} · Saldo ${money(saldoCredito(v))}</div>`).join('')}${vencidas.length>3?`<div>Y ${vencidas.length-3} más. Consulte Historial de ventas en Administrador.</div>`:''}`;
 }
 function abrirCobroVentaRapida(){
   const total=Math.round(ventaRapidaLineas.reduce((a,l)=>a+Number(l.total||0),0)*100)/100;
@@ -2733,19 +2768,35 @@ function renderMisCreditos(){
     cuerpo.innerHTML='<tr><td colspan="8" class="empty">Ingrese con su cuenta de usuario.</td></tr>';
     resumen.textContent='';return;
   }
-  const pendientes=db.ventas.filter(v=>creditoPerteneceUsuario(v)&&v.formaPago==='credito'&&!esDevuelta(v.id)&&saldoCredito(v)>0);
+  const pendientes=[...db.ventas,...gmcCarteraAperturaVentas()].filter(v=>creditoPerteneceUsuario(v)&&v.formaPago==='credito'&&!esDevuelta(v.id)&&saldoCredito(v)>0);
   const saldoTotal=pendientes.reduce((n,v)=>n+saldoCredito(v),0);
-  resumen.textContent=pendientes.length+' venta(s) a crédito pendientes · Saldo total: '+money(saldoTotal);
+  resumen.textContent=pendientes.length+' cuenta(s) a crédito pendientes (incluye deudas anteriores) · Saldo total: '+money(saldoTotal);
   const q=(document.getElementById('misCreditosBuscar')?.value||'').trim().toLocaleLowerCase('es');
   const visibles=pendientes.filter(v=>!q||(String(v.tercero||'')+' '+String(v.numero||'')).toLocaleLowerCase('es').includes(q));
-  cuerpo.innerHTML=visibles.slice().sort((a,b)=>String(b.fecha||'').localeCompare(String(a.fecha||''))).map(v=>`<tr><td>${esc(v.fecha)}</td><td>${esc(v.numero||'S/N')}</td><td>${esc(v.tercero)}</td><td>${money(v.total)}</td><td>${money(v.abono||0)}</td><td><strong>${money(saldoCredito(v))}</strong></td><td>${esc(fechaVencimientoCredito(v.fecha))}${creditoVencido(v)?'<br><strong class="danger">VENCIDA</strong>':''}</td><td><div class="actions" style="flex-wrap:nowrap"><button class="btn btn-light" onclick="verDoc('ventas','${esc(v.id)}')">Ver</button><button class="btn btn-success" onclick="abrirAbonoCredito('${esc(v.id)}')">Abonar</button></div></td></tr>`).join('')||'<tr><td colspan="8" class="empty">No hay créditos pendientes con ese criterio.</td></tr>';
+  cuerpo.innerHTML=visibles.slice().sort((a,b)=>String(b.fecha||'').localeCompare(String(a.fecha||''))).map(v=>`<tr><td>${esc(v.fecha)}</td><td>${esc(v.numero||'S/N')}</td><td>${esc(v.tercero)}</td><td>${money(v.total)}</td><td>${money(v.abono||0)}</td><td><strong>${money(saldoCredito(v))}</strong></td><td>${esc(v.fechaVencimiento||fechaVencimientoCredito(v.fecha))}${creditoVencido(v)?'<br><strong class="danger">VENCIDA</strong>':''}</td><td><div class="actions" style="flex-wrap:nowrap"><button class="btn btn-light" onclick="verDoc('ventas','${esc(v.id)}')">Ver</button><button class="btn btn-success" onclick="abrirAbonoCredito('${esc(v.id)}')">Abonar</button></div></td></tr>`).join('')||'<tr><td colspan="8" class="empty">No hay créditos pendientes con ese criterio.</td></tr>';
 }
 function abrirAbonoCredito(id){
+ if(String(id).startsWith('gmc_apertura_'))return gmcAbrirAbonoApertura(id);
  if(db.ventas.some(v=>v.id===id&&v.etapaFirebase==='etapa5')&&!window.gmcRegistrarAbonoCreditoFirebase)return alert('Abonos centrales aún no disponibles. Espere la conexión con Firebase.');
   const v=db.ventas.find(x=>x.id===id);
   if(!adminAutenticado&&!creditoPerteneceUsuario(v))return alert('Solo puede registrar abonos de sus propias ventas a crédito.');
   if(!v||v.formaPago!=='credito'||saldoCredito(v)<=0||esDevuelta(id))return alert('Esta venta no tiene un saldo pendiente para abonar');
   openModal('Registrar abono · '+(v.numero||'S/N'),`<p><b>Cliente:</b> ${esc(v.tercero)}<br><b>Fecha de venta:</b> ${esc(v.fecha)}<br><b>Vencimiento:</b> ${esc(fechaVencimientoCredito(v.fecha))}<br><b>Saldo pendiente:</b> ${money(saldoCredito(v))}</p><div class="row"><div class="c6"><label>Nuevo abono</label><input id="cobroNuevoAbono" type="number" min="0.01" step="0.01" max="${saldoCredito(v)}" oninput="actualizarMetodoAbonoCredito()"></div><div class="c6"><label>Fecha de registro del abono (hoy)</label><input id="cobroFechaAbono" type="date" value="${fechaSistemaCierre()}" readonly></div><div class="c6"><label>Forma de cobro del abono</label><select id="cobroMetodoAbono" onchange="actualizarMetodoAbonoCredito()"><option value="efectivo">Efectivo</option><option value="transferencia">Transferencia</option><option value="mixto">Efectivo + Transferencia</option><option value="cheque">Cheque</option></select></div><div class="c12" id="cobroAbonoMixtoCampo" style="display:none"><div class="row"><div class="c6"><label>Abono en efectivo ($)</label><input id="cobroAbonoEfectivo" type="number" min="0.01" step="0.01" oninput="actualizarMetodoAbonoCredito()"></div><div class="c6"><label>Abono por transferencia ($)</label><input id="cobroAbonoTransferencia" type="number" min="0.01" step="0.01" oninput="actualizarMetodoAbonoCredito()"></div></div><p class="note" id="cobroAbonoMixtoResumen" style="margin-top:8px">Los importes deben sumar el valor del abono.</p></div><div class="c12" id="cobroAbonoChequeCampo" style="display:none"><div class="row"><div class="c4"><label>Banco del cheque</label><input id="cobroAbonoChequeBanco" autocomplete="off" placeholder="Nombre del banco"></div><div class="c4"><label>Número de cheque</label><input id="cobroAbonoChequeNumero" autocomplete="off" placeholder="Número del cheque"></div><div class="c4"><label>Titular de la cuenta</label><input id="cobroAbonoChequeTitular" autocomplete="off" placeholder="Nombre del titular"></div></div><label style="margin-top:10px">Fecha prevista de cobro / efectivización del cheque</label><input id="cobroAbonoChequeFecha" type="date" min="${fechaSistemaCierre()}"><p class="note" style="margin-top:7px">Este cheque quedará separado del efectivo y las transferencias del cierre.</p></div></div>${historialAbonosCreditoHtml(v)}<div class="actions" style="margin-top:12px"><button class="btn btn-light" onclick="cerrarModal()">Cancelar</button><button class="btn btn-success" onclick="registrarAbonoCredito('${esc(id)}')">Guardar abono</button></div>`);
+}
+// Abonos de cartera anterior: mismo método de cobro, registro independiente de las ventas.
+function gmcAbrirAbonoApertura(id){
+ const c=gmcDeudaPorId(id),v=gmcCarteraAperturaVentas().find(x=>x.id===id);
+ if(!c||!v)return alert('El cliente ya no tiene deuda anterior pendiente.');
+ if(!adminAutenticado&&String(c.vendedorId)!==String(usuarioActual?.id||''))return alert('La cuenta corresponde a otro vendedor.');
+ const saldo=Number(v.saldo);
+ openModal('Recuperar deuda anterior · '+c.nombre,`<p><b>Cliente:</b> ${esc(c.nombre)}<br><b>Documento anterior:</b> ${esc(v.fecha)}<br><b>Vencimiento:</b> ${esc(v.fechaVencimiento)}<br><b>Saldo pendiente:</b> ${money(saldo)}</p>
+ <p class="note">Este es un saldo anterior al sistema, NO una venta nueva. El abono se registrará en Firestore, asociado al vendedor que lo reciba y al cierre de caja de hoy.</p>
+ <div class="row"><div class="c6"><label>Nuevo abono</label><input id="cobroNuevoAbono" type="number" min="0.01" max="${saldo}" step="0.01" oninput="actualizarMetodoAbonoCredito()"></div>
+ <div class="c6"><label>Fecha del cobro (hoy)</label><input id="cobroFechaAbono" type="date" value="${fechaSistemaCierre()}" readonly></div>
+ <div class="c6"><label>Forma de cobro</label><select id="cobroMetodoAbono" onchange="actualizarMetodoAbonoCredito()"><option value="efectivo">Efectivo</option><option value="transferencia">Transferencia</option><option value="mixto">Efectivo + Transferencia</option></select></div>
+ <div class="c12" id="cobroAbonoMixtoCampo" style="display:none"><div class="row"><div class="c6"><label>Efectivo ($)</label><input id="cobroAbonoEfectivo" type="number" step="0.01" min="0.01" oninput="actualizarMetodoAbonoCredito()"></div><div class="c6"><label>Transferencia ($)</label><input id="cobroAbonoTransferencia" type="number" step="0.01" min="0.01" oninput="actualizarMetodoAbonoCredito()"></div></div><p id="cobroAbonoMixtoResumen" class="note"></p></div>
+ <div class="c12" id="cobroAbonoChequeCampo" style="display:none"><div class="row"><div class="c4"><label>Banco</label><input id="cobroAbonoChequeBanco"></div><div class="c4"><label>Número cheque</label><input id="cobroAbonoChequeNumero"></div><div class="c4"><label>Titular</label><input id="cobroAbonoChequeTitular"></div></div><label>Fecha prevista de cobro</label><input id="cobroAbonoChequeFecha" type="date" min="${fechaSistemaCierre()}"></div></div>
+ ${historialAbonosCreditoHtml(v)}<div class="actions" style="margin-top:12px"><button class="btn btn-light" onclick="cerrarModal()">Cancelar</button><button class="btn btn-success" onclick="gmcRegistrarAbonoApertura('${esc(c.id)}')">Registrar abono</button></div>`);
 }
 function actualizarMetodoAbonoCredito(){
  const metodo=document.getElementById('cobroMetodoAbono')?.value;
@@ -3459,6 +3510,23 @@ function resumenCierreUsuario(fecha,usuario,usuarioId=''){
      }else r.abonosPosterioresEfectivo+=valor;
    }
  }
+ // Recuperaciones de deuda anterior: no constituyen venta del día.
+ const idOperador=String(usuarioId||cargarUsuarios().find(u=>u.usuario===usuario)?.id||(db.clientes||[]).flatMap(c=>c.carteraApertura?.abonos||[]).find(p=>p.usuarioNombre===usuario)?.usuarioId||'');
+ for(const c of db.clientes||[]){
+  for(const p of c.carteraApertura?.abonos||[]){
+   if(p.fecha!==fecha||String(p.usuarioId)!==idOperador)continue;
+   const valor=importeCierre(p.valor),metodo=p.formaPago||'efectivo';
+   r.abonosPosteriores+=valor;
+   if(metodo==='transferencia')r.abonosPosterioresTransferencia+=valor;
+   else if(metodo==='mixto'){
+    r.abonosPosterioresEfectivo+=importeCierre(p.pagoEfectivo);
+    r.abonosPosterioresTransferencia+=importeCierre(p.pagoTransferencia);
+   }else if(metodo==='cheque'){
+    r.chequesAbonos+=valor;
+    r.chequesDetalle.push({numero:'DEUDA ANTERIOR',cliente:c.nombre||'',origen:'Recuperación anterior',importe:valor,fechaCobroCheque:p.fechaCobroCheque||'',bancoCheque:p.bancoCheque||'',numeroCheque:p.numeroCheque||'',titularCheque:p.titularCheque||''});
+   }else r.abonosPosterioresEfectivo+=valor;
+  }
+ }
  r.transferencias+=r.abonosPosterioresTransferencia;
  for(const k of ['ventas','efectivoVentas','transferencias','chequesVentas','chequesAbonos','abonosPosterioresEfectivo','abonosPosterioresTransferencia','ventasCredito','abonosIniciales','abonosPosteriores','sinFormaCobro','saldoCreditoDia'])r[k]=redondeoCierre(r[k]);
  r.abonosCredito=redondeoCierre(r.abonosIniciales+r.abonosPosteriores);
@@ -3470,9 +3538,10 @@ function resumenCierreUsuario(fecha,usuario,usuarioId=''){
 function usuariosCierreHoy(fecha){
  const deVentas=db.ventas.filter(v=>v.fecha===fecha&&!esDevuelta(v.id)).map(nombreUsuarioCierre);
  const conAbonos=db.ventas.filter(v=>v.formaPago==='credito'&&!esDevuelta(v.id)&&(v.abonosPosteriores||[]).some(p=>p.fecha===fecha)).map(nombreUsuarioCierre);
+ const conApertura=(db.clientes||[]).flatMap(c=>(c.carteraApertura?.abonos||[]).filter(a=>a.fecha===fecha).map(a=>cargarUsuarios().find(u=>String(u.id)===String(a.usuarioId))?.usuario||a.usuarioNombre||''));
  const conStock=(db.stockUsuarios||[]).filter(a=>a.estado==='abierta').map(a=>cargarUsuarios().find(u=>u.id===a.usuarioId)?.usuario||a.usuario);
  const conGastos=(db.gastosOperativosUsuarios||[]).filter(g=>g.fecha===fecha).map(usuarioGastoOperativo);
- return [...new Set([...deVentas,...conAbonos,...conStock,...conGastos])].sort((a,b)=>a.localeCompare(b,'es'));
+ return [...new Set([...deVentas,...conAbonos,...conApertura,...conStock,...conGastos].filter(Boolean))].sort((a,b)=>a.localeCompare(b,'es'));
 }
 const CIERRE_GENERAL='__CIERRE_GENERAL__';
 const NOMBRE_CIERRE_GENERAL='General · Todos los usuarios';
@@ -4345,6 +4414,7 @@ window.gmcGuardarMaestroFirebase=async(tipo,registro)=>{
  const anterior=db[tipo].some(p=>p.id===registro.id);
  gmcMaestroPuedeEscribir(tipo,anterior?'editar':'crear');
  const dato={...registro};
+ if(tipo==='clientes'&&dato.carteraApertura&&firebaseRolGMC!=='admin')throw Error('Solo el administrador Firebase puede registrar deudas anteriores.');
  if(tipo==='clientes'&&!anterior){
    dato.creadoPor=firebaseAuthGMC.currentUser.uid;
    // Un vendedor solo puede registrar clientes bajo su propia responsabilidad.
@@ -4377,6 +4447,15 @@ window.gmcGuardarMaestroFirebase=async(tipo,registro)=>{
        if(adminAutenticado&&Math.abs(Number(dato.stock)-actual)>0.000001)tx.set(movimiento,{id:movimiento.id,tipo:'edicion_stock_producto',productoId:dato.id,antes:actual,despues:Number(dato.stock),fecha:new Date().toISOString(),usuarioId:firebaseAuthGMC.currentUser.uid});
      }else{tx.set(referencia,dato);}
    });
+ }else if(tipo==='clientes'&&dato.carteraApertura){
+   // Una sola inicialización por cliente. Nunca se sobrescriben abonos remotos.
+   await runTransaction(remoto,async tx=>{
+    const previo=await tx.get(referencia);
+    if(previo.exists()&&previo.data().carteraApertura)throw Error('Este cliente ya tiene una deuda anterior. No se duplicó.');
+    if(anterior&&!previo.exists())throw Error('El cliente ya no existe. Actualice su lista.');
+    if(!anterior&&previo.exists())throw Error('Este cliente ya existe. Actualice su lista.');
+    if(previo.exists())tx.update(referencia,dato);else tx.set(referencia,dato);
+   });
  }else if(anterior)await updateDoc(referencia,dato);
  else await setDoc(referencia,dato);
 };
@@ -4392,6 +4471,7 @@ window.gmcEliminarMaestroFirebase=async(tipo,id)=>{
   if(tipo==='clientes'&&usuarioActual&&!adminAutenticado&&autorizacionClienteBorrado!==String(id)){
    return solicitarClaveAdministradorCliente('borrar',id);
   }
+  if(tipo==='clientes'&&registro.carteraApertura?.importe>0)return alert('No se puede borrar un cliente con historial de deuda anterior. Conserve el registro para mantener la trazabilidad de cobros.');
   if(tipo==='productos'&&((db.stockUsuarios||[]).some(a=>a.productoId===id&&a.estado==='abierta'&&a.restante>0)||Number(registro.unidadesAsignadas||0)>0))return alert('Este producto tiene existencias asignadas en Firestore. No puede eliminarlo hasta que regresen al inventario central.');
   if(!confirm('¿Eliminar este registro?'))return;
   const remoto=(tipo==='clientes'&&!adminAutenticado)
@@ -4879,6 +4959,90 @@ window.gmcRegistrarAbonoCreditoFirebase=async id=>{
   await gmcProcesarAbonoPendiente(pendiente);
  }catch(error){alert(error.message||mensajeFirebaseGMC(error));}
 };
+// Deudas anteriores: abonos centralizados e idempotentes en el documento cliente.
+const gmcClaveAbonoApertura=()=> 'gmc_apertura_abono_pendiente_'+(firebaseAuthGMC.currentUser?.uid||'sin_sesion');
+function gmcAperturaPendiente(){try{return JSON.parse(localStorage.getItem(gmcClaveAbonoApertura())||'null')}catch{return null}}
+window.gmcMostrarPendienteApertura=function gmcMostrarPendienteApertura(){
+ const p=gmcAperturaPendiente();
+ for(const id of ['gmcAperturaPendienteClientes','gmcAperturaPendienteMisCreditos']){
+  const e=document.getElementById(id);if(!e)continue;e.style.display=p?'':'none';
+  e.innerHTML=p?'<b>⚠️ Abono de deuda anterior sin confirmar.</b> No vuelva a cobrar hasta verificarlo. <button class="btn btn-warning" onclick="gmcReintentarAbonoApertura()">Comprobar y reintentar el mismo abono</button> <button class="btn btn-light" onclick="gmcDescartarAbonoApertura()">Descartar solo si no existe en Firestore</button>':'';
+ }
+}
+let gmcAperturaEscribiendo=false;
+async function gmcProcesarAbonoApertura(p){
+ const actual=firebaseAuthGMC.currentUser;
+ if(!actual||p.uid!==actual.uid)throw Error('Abono pendiente de otra sesión Firebase.');
+ if(!navigator.onLine||!gmcMasterListos.clientes||!gmcCierresListos)throw Error('Espere la confirmación de Clientes y Cierres desde el servidor.');
+ if(gmcAperturaEscribiendo)throw Error('Otro abono está en curso.');
+ gmcAperturaEscribiendo=true;
+ try{
+  const ref=doc(firestoreGMC,'clientes',p.clienteId);
+  const respuesta=await runTransaction(firestoreGMC,async tx=>{
+   const cierre=await tx.get(doc(firestoreGMC,'cierresCaja',actual.uid+'_'+p.abono.fecha));
+   const general=await tx.get(doc(firestoreGMC,'cierresCaja','general_'+p.abono.fecha));
+   const previo=await tx.get(ref);
+   if(!previo.exists())throw Error('El cliente ya no existe.');
+   const cliente=previo.data(),deuda=cliente.carteraApertura;
+   if(!deuda)throw Error('El cliente no tiene una deuda anterior registrada.');
+   if(firebaseRolGMC!=='admin'&&cliente.vendedorId!==actual.uid)throw Error('La deuda está asignada a otro vendedor.');
+   const abonos=Array.isArray(deuda.abonos)?deuda.abonos:[];
+   const existente=abonos.find(a=>a.id===p.abono.id);
+   if(existente){
+    if(existente.usuarioId!==actual.uid||gmcCentavosAbono(existente.valor)!==gmcCentavosAbono(p.abono.valor))throw Error('El ID del abono ya pertenece a otra operación.');
+    return {repetido:true,saldo:deuda.saldo};
+   }
+   if(cierre.exists()||general.exists())throw Error('La caja del día ya está cerrada. No se registró el abono.');
+   if(abonos.length>=300)throw Error('Se alcanzó el límite de abonos de esta deuda.');
+   const importe=gmcCentavosAbono(deuda.importe),saldo=gmcCentavosAbono(deuda.saldo),monto=gmcCentavosAbono(p.abono.valor);
+   const sumado=abonos.reduce((s,a)=>s+gmcCentavosAbono(a.valor),0);
+   if(!Number.isSafeInteger(importe)||!Number.isSafeInteger(saldo)||!Number.isSafeInteger(monto)||monto<=0||monto>saldo||importe!==saldo+sumado)throw Error('El saldo cambió o no concuerda con los abonos. No se duplicó el cobro.');
+   const saldoNuevo=(saldo-monto)/100;
+   tx.update(ref,{carteraApertura:{...deuda,saldo:saldoNuevo,abonos:[...abonos,p.abono]}});
+   return {repetido:false,saldo:saldoNuevo};
+  });
+  localStorage.removeItem(gmcClaveAbonoApertura());gmcMostrarPendienteApertura();
+  cerrarModal();renderAll();
+  alert((respuesta.repetido?'El abono ya existía, no fue duplicado.':'Abono de deuda anterior confirmado en Firestore.')+' Saldo pendiente: '+money(respuesta.saldo));
+ }catch(err){gmcMostrarPendienteApertura();alert('Abono sin confirmación definitiva: '+(err.message||mensajeFirebaseGMC(err))+'. Conserve el mismo identificador y use «Comprobar y reintentar».');}
+ finally{gmcAperturaEscribiendo=false;}
+}
+window.gmcRegistrarAbonoApertura=async clienteId=>{
+ try{
+  if(!firebaseAuthGMC.currentUser||!navigator.onLine||!gmcMasterListos.clientes||!gmcCierresListos)throw Error('Necesita conexión confirmada de Clientes y Cierres.');
+  if(gmcAperturaPendiente()||gmcAperturaEscribiendo)throw Error('Hay un abono pendiente. Compruébelo antes de continuar.');
+  const c=db.clientes.find(x=>x.id===clienteId);
+  if(!c||!c.carteraApertura||Number(c.carteraApertura.saldo)<=0)throw Error('No existe deuda anterior pendiente.');
+  if(firebaseRolGMC!=='admin'&&c.vendedorId!==firebaseAuthGMC.currentUser.uid)throw Error('Esta deuda pertenece a otro vendedor.');
+  const abono=gmcLeerNuevoAbono({saldo:c.carteraApertura.saldo});
+  abono.usuarioNombre=adminAutenticado?usuarioQueRealizoVenta():usuarioActual?.usuario||'';
+  if(!['efectivo','transferencia','mixto'].includes(abono.formaPago))throw Error('Las deudas anteriores admiten efectivo, transferencia o ambos.');
+  if(!confirm('¿Confirmar abono de '+money(abono.valor)+' para deuda anterior de '+c.nombre+'? Se incluirá en el cierre de hoy.'))return;
+  const p={uid:firebaseAuthGMC.currentUser.uid,clienteId,abono};
+  localStorage.setItem(gmcClaveAbonoApertura(),JSON.stringify(p));gmcMostrarPendienteApertura();
+  await gmcProcesarAbonoApertura(p);
+ }catch(err){alert(err.message||mensajeFirebaseGMC(err));}
+};
+window.gmcReintentarAbonoApertura=async()=>{
+ const p=gmcAperturaPendiente();if(!p)return alert('No existe un abono pendiente.');
+ await gmcProcesarAbonoApertura(p);
+};
+window.gmcDescartarAbonoApertura=async()=>{
+ const p=gmcAperturaPendiente(),usuario=firebaseAuthGMC.currentUser;
+ if(!p||!usuario||p.uid!==usuario.uid)return alert('No hay un abono pendiente de esta cuenta.');
+ if(!navigator.onLine||gmcAperturaEscribiendo)return alert('Espere una conexión estable y la finalización de las operaciones.');
+ try{
+  const remoto=await getDocFromServer(doc(firestoreGMC,'clientes',p.clienteId));
+  if(!remoto.exists())throw Error('El cliente no está disponible; no se puede verificar el abono.');
+  const anterior=remoto.data().carteraApertura;
+  if(anterior?.abonos?.some(a=>a.id===p.abono.id))return alert('Este abono YA existe en Firestore. Use «Comprobar y reintentar» para confirmar y limpiar el pendiente, sin duplicarlo.');
+  if(!confirm('Firestore confirma que este abono NO está registrado. ¿Descartar exclusivamente el intento sin cobrar?'))return;
+  localStorage.setItem('gmc_apertura_intento_no_registrado_'+p.abono.id,JSON.stringify({...p,estado:'NO REGISTRADO'}));
+  localStorage.removeItem(gmcClaveAbonoApertura());gmcMostrarPendienteApertura();
+  alert('Intento descartado sin registrar el cobro. Se conservó una copia local del intento no registrado.');
+ }catch(e){alert('No se descartó el pendiente: '+(e.message||mensajeFirebaseGMC(e)));}
+};
+
 window.gmcReintentarAbonoCreditoFirebase=async()=>{
  const p=gmcPendienteAbono();if(!p)return alert('No existe un abono pendiente.');
  if(p.uid!==firebaseAuthGMC.currentUser?.uid)return alert('El abono pertenece a otra sesión.');
@@ -5087,7 +5251,7 @@ function gmcExigirCierreFirebase(){
  if(gmcGastoEnCurso||gmcPendienteGasto())throw Error('Hay un gasto operativo pendiente de confirmar. Compruébelo antes de cerrar la caja.');
  if(gmcCierreEnCurso)throw Error('Ya se está confirmando un cierre de caja.');
  if(gmcPendienteCierre())throw Error('Hay un cierre pendiente. Utilice «Comprobar y reintentar el mismo cierre».');
- if(gmcPendienteVenta()||gmcPendienteAbono()||gmcVentaEnCurso||gmcAbonoEnCurso||gmcMovimientoEnCurso)throw Error('Existe una operación pendiente. Primero compruebe esa operación antes de cerrar la caja.');
+ if(gmcPendienteVenta()||gmcPendienteAbono()||gmcAperturaPendiente()||gmcVentaEnCurso||gmcAbonoEnCurso||gmcAperturaEscribiendo||gmcMovimientoEnCurso)throw Error('Existe una operación pendiente. Primero compruebe esa operación antes de cerrar la caja.');
 }
 function gmcResumenParaCerrar(fecha,usuario,usuarioId,tipo){
  const r=tipo==='general'?resumenCierreGeneral(fecha):resumenCierreUsuario(fecha,usuario,usuarioId);
