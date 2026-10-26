@@ -667,13 +667,20 @@
           <h3>Orden de visita de clientes por día y ruta</h3>
           <p class="note">El administrador determina la secuencia de visitas. Seleccione un día y una ruta, y utilice «Primero», «Subir» o «Bajar». El vendedor visualizará este mismo orden en Rutas. No cambia el día, la ruta, el vendedor ni las cuentas pendientes.</p>
           <div class="toolbar" style="margin-top:10px">
-            <div><label>Día de visita</label><select id="gmcOrdenDia" onchange="gmcRenderOrdenVisitas()"><option value="">Seleccione el día</option><option>Lunes</option><option>Martes</option><option>Miércoles</option><option>Jueves</option><option>Viernes</option><option>Sábado</option><option>Domingo</option></select></div>
-            <div><label>Ruta</label><select id="gmcOrdenRuta" onchange="gmcRenderOrdenVisitas()"><option value="">Seleccione la ruta</option></select></div>
+            <div><label>Día de visita</label><select id="gmcOrdenDia" onchange="gmcPaginaOrden25=1;gmcRenderOrdenVisitas()"><option value="">Seleccione el día</option><option>Lunes</option><option>Martes</option><option>Miércoles</option><option>Jueves</option><option>Viernes</option><option>Sábado</option><option>Domingo</option></select></div>
+            <div><label>Ruta</label><select id="gmcOrdenRuta" onchange="gmcPaginaOrden25=1;gmcRenderOrdenVisitas()"><option value="">Seleccione la ruta</option></select></div>
           </div>
+          <div class="toolbar" style="margin:8px 0"><div style="flex:1 1 220px"><label for="gmcBuscarOrden25">Buscar cliente en esta ruta</label><input type="search" id="gmcBuscarOrden25" autocomplete="off" placeholder="Nombre, razón social o identificación" oninput="gmcPaginaOrden25=1;gmcRenderOrdenVisitas()"></div></div>
           <p id="gmcOrdenEstado" class="muted" style="font-size:12px" aria-live="polite">Seleccione el día y la ruta para ordenar los clientes.</p>
           <div class="table-wrap"><table><thead><tr><th>Visita</th><th>Cliente</th><th>Identificación</th><th>Vendedor asignado</th><th>Ordenar</th></tr></thead><tbody id="gmcOrdenTabla"></tbody></table></div>
+          <div id="gmcPagOrden25" aria-live="polite"></div>
+        </div>
+        <!-- Búsqueda y paginación visual: no modifica fichas ni Firestore. -->
+        <div class="toolbar" style="margin:12px 0 8px">
+          <div style="flex:1 1 240px"><label for="gmcBuscarClientes25">Buscar cliente (nombre, razón social o identificación)</label><input id="gmcBuscarClientes25" type="search" autocomplete="off" placeholder="Buscar en todos los clientes…" oninput="gmcPaginaClientes25=1;renderPersonas()"></div>
         </div>
         <div class="table-wrap"><table><thead><tr><th>Identificación</th><th>Nombre</th><th>Razón social</th><th>Ruta</th><th>Día de visita</th><th>Teléfono</th><th>Email</th><th>Dirección</th><th>Cuenta anterior pendiente</th><th></th></tr></thead><tbody id="tbClientes"></tbody></table></div>
+        <div id="gmcPagClientes25" aria-live="polite"></div>
       </div>
     </section>
 
@@ -683,16 +690,17 @@
         <h3>🗺️ Rutas · Plan de visitas</h3>
         <p class="muted" style="font-size:12px">Clientes organizados según su día de visita, su ruta y el vendedor asignado en Clientes. Las cuentas pendientes incluyen ventas a crédito y deudas anteriores con saldo por cobrar.</p>
         <div class="toolbar" style="margin-top:12px">
-          <div><label>Día de visita</label><select id="rutasFiltroDia" onchange="renderRutas()">
+          <div><label>Día de visita</label><select id="rutasFiltroDia" onchange="gmcPaginaRutas25=1;renderRutas()">
             <option value="">Todos los días</option>
             <option value="Lunes">Lunes</option><option value="Martes">Martes</option>
             <option value="Miércoles">Miércoles</option><option value="Jueves">Jueves</option>
             <option value="Viernes">Viernes</option><option value="Sábado">Sábado</option>
             <option value="Domingo">Domingo</option>
           </select></div>
-          <div><label>Vendedor / usuario</label><select id="rutasFiltroVendedor" onchange="renderRutas()"></select></div>
-          <div><label>Número de ruta</label><select id="rutasFiltroNumero" onchange="renderRutas()"><option value="">Todas las rutas</option></select></div>
+          <div><label>Vendedor / usuario</label><select id="rutasFiltroVendedor" onchange="gmcPaginaRutas25=1;renderRutas()"></select></div>
+          <div><label>Número de ruta</label><select id="rutasFiltroNumero" onchange="gmcPaginaRutas25=1;renderRutas()"><option value="">Todas las rutas</option></select></div>
         </div>
+        <div class="toolbar" style="margin:8px 0"><div style="flex:1 1 240px"><label for="gmcBuscarRutas25">Buscar cliente de las rutas visibles</label><input type="search" id="gmcBuscarRutas25" autocomplete="off" placeholder="Nombre, razón social o identificación" oninput="gmcPaginaRutas25=1;renderRutas()"></div></div>
         <div class="grid g4" style="margin:12px 0">
           <div class="card kpi"><small>Clientes por visitar</small><strong id="rutasCantidadClientes">0</strong></div>
           <div class="card kpi"><small>Clientes con cuentas pendientes</small><strong id="rutasClientesDeudores">0</strong></div>
@@ -706,6 +714,7 @@
             <tbody id="rutasTablaClientes"></tbody>
           </table>
         </div>
+        <div id="gmcPagRutas25" aria-live="polite"></div>
       </div>
     </section>
 
@@ -1735,10 +1744,46 @@ async function guardarPersona(tipo,id){
   return;
  }
 }
+// Lista de clientes: búsqueda y páginas de 25, exclusivamente en memoria del navegador.
+let gmcPaginaClientes25=1;
+let gmcPaginaOrden25=1;
+let gmcPaginaRutas25=1;
+const GMC_CLIENTES_POR_PAGINA=25;
+function gmcCoincideCliente25(cliente,busqueda){
+ const normalizar=valor=>String(valor??'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLocaleLowerCase('es').trim();
+ const termino=normalizar(busqueda);
+ if(!termino)return true;
+ return [cliente.nombre,cliente.nombreCliente,cliente.razonSocial,cliente.identificacion]
+  .some(valor=>normalizar(valor).includes(termino));
+}
+function gmcPagina25(registros,pagina){
+ const total=registros.length;
+ const totalPaginas=Math.max(1,Math.ceil(total/GMC_CLIENTES_POR_PAGINA));
+ const actual=Math.min(Math.max(1,Number(pagina)||1),totalPaginas);
+ const inicio=(actual-1)*GMC_CLIENTES_POR_PAGINA;
+ return {items:registros.slice(inicio,inicio+GMC_CLIENTES_POR_PAGINA),pagina:actual,totalPaginas,total,inicio};
+}
+function gmcPaginadorClientes25(paginado,tipo){
+ const inicio=paginado.total?paginado.inicio+1:0;
+ const fin=Math.min(paginado.total,paginado.inicio+GMC_CLIENTES_POR_PAGINA);
+ return `<div class="actions" style="align-items:center;justify-content:space-between;gap:8px;margin-top:10px;flex-wrap:wrap">
+  <span class="muted" style="font-size:12px">Clientes ${inicio}–${fin} de ${paginado.total} · Página ${paginado.pagina} de ${paginado.totalPaginas}</span>
+  <div class="actions" style="gap:6px"><button type="button" class="btn btn-light" ${paginado.pagina<=1?'disabled':''} onclick="gmcCambiarPaginaClientes25('${tipo}',-1)">← Anterior</button>
+  <button type="button" class="btn btn-light" ${paginado.pagina>=paginado.totalPaginas?'disabled':''} onclick="gmcCambiarPaginaClientes25('${tipo}',1)">Siguiente →</button></div></div>`;
+}
+function gmcCambiarPaginaClientes25(tipo,incremento){
+ if(tipo==='clientes'){gmcPaginaClientes25+=incremento;renderPersonas();}
+ else if(tipo==='orden'){gmcPaginaOrden25+=incremento;gmcRenderOrdenVisitas();}
+ else if(tipo==='rutas'){gmcPaginaRutas25+=incremento;renderRutas();}
+}
 function renderPersonas(){
  window.gmcMostrarPendienteApertura?.();
  gmcRenderOrdenVisitas();
- tbClientes.innerHTML=db.clientes.map(p=>`<tr><td>${esc(p.identificacion)}</td><td>${esc(p.nombreCliente??(p.razonSocial?'':p.nombre||''))}</td><td>${esc(p.razonSocial||'')}</td><td>${esc(p.ruta||'')}</td><td>${esc(p.diaVisita||'')}</td><td>${esc(p.telefono)}</td><td>${esc(p.email)}</td><td>${esc(p.direccion)}</td><td>${p.carteraApertura?`<strong>${money(p.carteraApertura.saldo||0)}</strong>${gmcAperturaVencida(p)?`<span class="danger"> · VENCIDA</span>`:''}`:'—'}</td><td><div class="actions" style="flex-wrap:nowrap;gap:5px"><button class="btn btn-light" style="padding:7px 9px" title="Editar" aria-label="Editar cliente" onclick='modalPersona("cliente",${JSON.stringify(p)})'>✏️</button><button class="btn btn-light danger" style="padding:7px 9px" title="Borrar" aria-label="Borrar cliente" onclick="deleteBy('clientes','${p.id}')">🗑️</button></div></td></tr>`).join('')||`<tr><td colspan="10" class="empty">Sin clientes</td></tr>`;
+ const clientesFiltrados25=(db.clientes||[]).filter(p=>gmcCoincideCliente25(p,document.getElementById('gmcBuscarClientes25')?.value||''));
+ const paginaClientes25=gmcPagina25(clientesFiltrados25,gmcPaginaClientes25);
+ gmcPaginaClientes25=paginaClientes25.pagina;
+ document.getElementById('gmcPagClientes25').innerHTML=gmcPaginadorClientes25(paginaClientes25,'clientes');
+ tbClientes.innerHTML=paginaClientes25.items.map(p=>`<tr><td>${esc(p.identificacion)}</td><td>${esc(p.nombreCliente??(p.razonSocial?'':p.nombre||''))}</td><td>${esc(p.razonSocial||'')}</td><td>${esc(p.ruta||'')}</td><td>${esc(p.diaVisita||'')}</td><td>${esc(p.telefono)}</td><td>${esc(p.email)}</td><td>${esc(p.direccion)}</td><td>${p.carteraApertura?`<strong>${money(p.carteraApertura.saldo||0)}</strong>${gmcAperturaVencida(p)?`<span class="danger"> · VENCIDA</span>`:''}`:'—'}</td><td><div class="actions" style="flex-wrap:nowrap;gap:5px"><button class="btn btn-light" style="padding:7px 9px" title="Editar" aria-label="Editar cliente" onclick='modalPersona("cliente",${JSON.stringify(p)})'>✏️</button><button class="btn btn-light danger" style="padding:7px 9px" title="Borrar" aria-label="Borrar cliente" onclick="deleteBy('clientes','${p.id}')">🗑️</button></div></td></tr>`).join('')||`<tr><td colspan="10" class="empty">Sin clientes</td></tr>`;
  tbProveedores.innerHTML=db.proveedores.map(p=>`<tr><td>${esc(p.identificacion)}</td><td>${esc(p.nombre)}</td><td>${esc(p.telefono)}</td><td>${esc(p.email)}</td><td>${esc(p.direccion)}</td><td><div class="actions" style="flex-wrap:nowrap;gap:5px"><button class="btn btn-light" style="padding:7px 9px" title="Editar" aria-label="Editar proveedor" onclick='modalPersona("proveedor",${JSON.stringify(p)})'>✏️</button><button class="btn btn-light danger" style="padding:7px 9px" title="Borrar" aria-label="Borrar proveedor" onclick="deleteBy('proveedores','${p.id}')">🗑️</button></div></td></tr>`).join('')||`<tr><td colspan="6" class="empty">Sin proveedores</td></tr>`
 }
 // Cartera anterior de apertura: deuda previa del cliente, SIN ventas ni consumo de stock.
@@ -1872,13 +1917,21 @@ function gmcRenderOrdenVisitas(){
  if(rutas.includes(actual))ruta.value=actual;
  if(!dia.value||!ruta.value){
   gmcOrdenVistaClientes=[];
+  document.getElementById('gmcPagOrden25').innerHTML='';
   tabla.innerHTML='<tr><td colspan="5" class="empty">Seleccione día y ruta para establecer el recorrido.</td></tr>';
   if(!gmcOrdenGuardando)estado.textContent='Seleccione un día y una ruta con clientes asignados.';
   return;
  }
  gmcOrdenVistaClientes=(db.clientes||[]).filter(c=>c.diaVisita===dia.value&&String(c.ruta||'').trim()===ruta.value).sort(gmcCompararOrdenVisitas);
+ // Se pagina únicamente lo visible; los índices de los botones siguen siendo los globales.
+ const filtroOrden25=document.getElementById('gmcBuscarOrden25')?.value||'';
+ const ordenFiltrado25=gmcOrdenVistaClientes.map((cliente,indice)=>({cliente,indice}))
+   .filter(fila=>gmcCoincideCliente25(fila.cliente,filtroOrden25));
+ const paginaOrden25=gmcPagina25(ordenFiltrado25,gmcPaginaOrden25);
+ gmcPaginaOrden25=paginaOrden25.pagina;
+ document.getElementById('gmcPagOrden25').innerHTML=gmcPaginadorClientes25(paginaOrden25,'orden');
  const usuarios=new Map(cargarUsuarios().map(u=>[String(u.id),u.usuario]));
- tabla.innerHTML=gmcOrdenVistaClientes.map((c,i)=>`<tr>
+ tabla.innerHTML=paginaOrden25.items.map(({cliente:c,indice:i})=>`<tr>
   <td><strong>${i+1}</strong></td><td>${esc(c.nombreCliente||c.razonSocial||c.nombre||'—')}</td>
   <td>${esc(c.identificacion||'—')}</td><td>${esc(usuarios.get(String(c.vendedorId))||c.vendedorNombre||'Sin asignar')}</td>
   <td><div class="actions" style="gap:4px;flex-wrap:wrap">
@@ -1886,7 +1939,7 @@ function gmcRenderOrdenVisitas(){
    <button type="button" class="btn btn-light" style="padding:6px" ${i===0||gmcOrdenGuardando?'disabled':''} onclick="gmcMoverOrdenVisita(${i},'subir')">↑ Subir</button>
    <button type="button" class="btn btn-light" style="padding:6px" ${i===gmcOrdenVistaClientes.length-1||gmcOrdenGuardando?'disabled':''} onclick="gmcMoverOrdenVisita(${i},'bajar')">↓ Bajar</button>
   </div></td></tr>`).join('')||'<tr><td colspan="5" class="empty">No hay clientes para este día y ruta.</td></tr>';
- if(!gmcOrdenGuardando)estado.textContent=gmcOrdenVistaClientes.length+' cliente(s) · '+dia.value+' · Ruta '+ruta.value+'. El orden se guarda en Cloud Firestore al mover un cliente.';
+ if(!gmcOrdenGuardando)estado.textContent=gmcOrdenVistaClientes.length+' cliente(s) en la ruta · '+ordenFiltrado25.length+' coincide(n) con la búsqueda · '+dia.value+' · Ruta '+ruta.value+'. El orden se guarda en Cloud Firestore al mover un cliente.';
 }
 // Rutas: consulta sin escrituras. Los vendedores ven solo sus clientes asignados.
 function renderRutas(){
@@ -1972,7 +2025,7 @@ function renderRutas(){
   let pendientes=0,vencidos=0,conSaldo=0,facturas=0;
   const nombresUsuarios=new Map(usuarios.map(u=>[String(u.id),u.usuario]));
   const secuenciaPorRutaDia=new Map();
-  tabla.innerHTML=clientes.map(c=>{
+  const filasRutas25=clientes.map(c=>{
     const grupoVisita=gmcClaveGrupoOrdenVisitas(c);
     const numeroVisita=(secuenciaPorRutaDia.get(grupoVisita)||0)+1;
     secuenciaPorRutaDia.set(grupoVisita,numeroVisita);
@@ -1982,8 +2035,13 @@ function renderRutas(){
     pendientes+=saldo;vencidos+=vencido;facturas+=creditos.length;if(saldo>0)conSaldo++;
     const vendedor=c.vendedorId?(nombresUsuarios.get(String(c.vendedorId))||c.vendedorNombre||'Usuario no registrado'):'Sin asignar';
     const detalle=creditos.length?`<details><summary style="cursor:pointer;color:var(--azul2);font-weight:700">Ver ${creditos.length} factura(s)</summary><div class="table-wrap" style="margin-top:8px"><table><thead><tr><th>Factura</th><th>Fecha</th><th>Vencimiento</th><th>Saldo</th><th>Estado</th></tr></thead><tbody>${creditos.map(v=>`<tr><td>${esc(v.numero||'S/N')}</td><td>${esc(v.fecha||'—')}</td><td>${esc(v.fechaVencimiento||fechaVencimientoCredito(v.fecha)||'—')}</td><td>${money(saldoCredito(v))}</td><td>${creditoVencido(v)?'<span class="danger">Vencida</span>':'Pendiente'}</td></tr>`).join('')}</tbody></table></div></details>`:'—';
-    return `<tr><td>${esc(c.ruta||'—')}</td><td><strong>${numeroVisita}</strong></td><td>${esc(c.nombreCliente??(c.razonSocial?'':c.nombre||''))}</td><td>${esc(c.razonSocial||'')}</td><td>${esc(c.identificacion||'')}</td><td>${esc(c.diaVisita||'—')}</td><td>${esc(vendedor)}</td><td>${esc(c.telefono||'')}</td><td>${esc(c.direccion||'')}</td><td>${creditos.length}</td><td><strong class="${saldo>0?'danger':''}">${money(saldo)}</strong></td><td>${detalle}</td></tr>`;
-  }).join('')||'<tr><td colspan="12" class="empty">No hay clientes asignados para los filtros seleccionados.</td></tr>';
+    return {cliente:c,html:`<tr><td>${esc(c.ruta||'—')}</td><td><strong>${numeroVisita}</strong></td><td>${esc(c.nombreCliente??(c.razonSocial?'':c.nombre||''))}</td><td>${esc(c.razonSocial||'')}</td><td>${esc(c.identificacion||'')}</td><td>${esc(c.diaVisita||'—')}</td><td>${esc(vendedor)}</td><td>${esc(c.telefono||'')}</td><td>${esc(c.direccion||'')}</td><td>${creditos.length}</td><td><strong class="${saldo>0?'danger':''}">${money(saldo)}</strong></td><td>${detalle}</td></tr>`};
+  });
+  const filasFiltradas25=filasRutas25.filter(f=>gmcCoincideCliente25(f.cliente,document.getElementById('gmcBuscarRutas25')?.value||''));
+  const paginaRutas25=gmcPagina25(filasFiltradas25,gmcPaginaRutas25);
+  gmcPaginaRutas25=paginaRutas25.pagina;
+  tabla.innerHTML=paginaRutas25.items.map(f=>f.html).join('')||'<tr><td colspan="12" class="empty">No hay clientes para estos filtros o búsqueda.</td></tr>';
+  document.getElementById('gmcPagRutas25').innerHTML=gmcPaginadorClientes25(paginaRutas25,'rutas');
   document.getElementById('rutasCantidadClientes').textContent=clientes.length;
   document.getElementById('rutasClientesDeudores').textContent=conSaldo;
   document.getElementById('rutasTotalPendiente').textContent=money(pendientes);
