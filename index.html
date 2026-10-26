@@ -601,6 +601,12 @@
          <div id="gmcVentaReintento" style="display:none;margin:8px 10px"><button class="btn btn-warning" onclick="gmcReintentarVentaFirebase()">Revisar y reintentar venta pendiente</button> <button class="btn btn-light" onclick="gmcDescartarVentaPendienteFirebase()">Descartar si no fue registrada</button></div>
          <div id="alertaCarteraVentas" class="alert-item red" style="display:none;margin:10px 10px 0"></div>
         <div class="sale-form">
+          <!-- Venta excepcional del administrador: atribución comercial a vendedor ya cerrado. -->
+          <div id="gmcVentaPostCierrePanel" class="note" style="display:none;margin-bottom:12px">
+            <label for="gmcVentaPostCierreVendedor">Venta posterior al cierre personal · atribuir a vendedor</label>
+            <select id="gmcVentaPostCierreVendedor" onchange="gmcCambioVendedorVentaPostCierre()"><option value="">Venta normal a nombre del administrador</option></select>
+            <small id="gmcVentaPostCierreAviso" class="muted">Solo aparecen vendedores cuyo cierre personal de hoy ya consta en Firestore. La venta sale del inventario central y no modifica el cierre personal emitido.</small>
+          </div>
           <div class="sale-grid">
             <div class="small"><label># Venta</label><input id="rvNumero" readonly></div>
             <div class="small"><label>Fecha</label><input id="rvFecha" type="date"></div>
@@ -2118,7 +2124,7 @@ function renderVentas(){
  let d=vDesde.value,h=vHasta.value;
  let arr=db.ventas.filter(x=>between(x.fecha,d,h)&&metaCoincideFiltroVendedor(x,usuario)&&
    (!ruta||(ruta==='__sin_ruta__'?!rutaVentaAnalisis(x):rutaVentaAnalisis(x)===ruta)));
- tbVentas.innerHTML=arr.slice().reverse().map(x=>`<tr><td>${x.fecha}</td><td>${esc(x.numero)}</td><td>${esc(x.tercero)}</td><td>${esc(rutaVentaAnalisis(x)||'Sin ruta asignada')}</td><td>${esc(x.usuarioVenta||'No registrado')}</td><td>${money(x.total)}</td><td>${esc(detalleFormaCobro(x))}${creditoVencido(x)?'<br><strong class="danger">CARTERA VENCIDA</strong>':''}</td><td>${x.formaPago==='credito'?money(resumenAbonosVentaCredito(x).total):'—'}</td><td>${x.formaPago==='credito'?money(resumenAbonosVentaCredito(x).saldo):'—'}</td><td><div class="actions" style="flex-wrap:nowrap"><button class="btn btn-light" onclick="verDoc('ventas','${x.id}')" title="Ver" aria-label="Ver">👁️</button><button class="btn btn-light" onclick="imprimirVenta('${x.id}')" title="Imprimir" aria-label="Imprimir">🖨️</button><button class="btn btn-primary" onclick="editarVenta('${x.id}')" ${esDevuelta(x.id)?'disabled title="Venta devuelta"':'title="Editar"'} aria-label="Editar">✏️</button>${x.formaPago==='credito'&&saldoCredito(x)>0&&!esDevuelta(x.id)?`<button class="btn btn-success" onclick="abrirAbonoCredito('${x.id}')">Abonar</button>`:''}<button class="btn btn-danger" onclick="solicitarEliminacionVenta('${x.id}')" title="Eliminar" aria-label="Eliminar">🗑️</button></div></td></tr>`).join('')||`<tr><td colspan="10" class="empty">Sin ventas</td></tr>`
+ tbVentas.innerHTML=arr.slice().reverse().map(x=>`<tr><td>${x.fecha}</td><td>${esc(x.numero)}</td><td>${esc(x.tercero)}</td><td>${esc(rutaVentaAnalisis(x)||'Sin ruta asignada')}</td><td>${esc(x.usuarioVenta||'No registrado')}${x.ventaAdminAtribuida===true?'<br><small class="muted">Venta registrada por administrador tras cierre · stock central</small>':''}</td><td>${money(x.total)}</td><td>${esc(detalleFormaCobro(x))}${creditoVencido(x)?'<br><strong class="danger">CARTERA VENCIDA</strong>':''}</td><td>${x.formaPago==='credito'?money(resumenAbonosVentaCredito(x).total):'—'}</td><td>${x.formaPago==='credito'?money(resumenAbonosVentaCredito(x).saldo):'—'}</td><td><div class="actions" style="flex-wrap:nowrap"><button class="btn btn-light" onclick="verDoc('ventas','${x.id}')" title="Ver" aria-label="Ver">👁️</button><button class="btn btn-light" onclick="imprimirVenta('${x.id}')" title="Imprimir" aria-label="Imprimir">🖨️</button><button class="btn btn-primary" onclick="editarVenta('${x.id}')" ${esDevuelta(x.id)?'disabled title="Venta devuelta"':'title="Editar"'} aria-label="Editar">✏️</button>${x.formaPago==='credito'&&saldoCredito(x)>0&&!esDevuelta(x.id)?`<button class="btn btn-success" onclick="abrirAbonoCredito('${x.id}')">Abonar</button>`:''}<button class="btn btn-danger" onclick="solicitarEliminacionVenta('${x.id}')" title="Eliminar" aria-label="Eliminar">🗑️</button></div></td></tr>`).join('')||`<tr><td colspan="10" class="empty">Sin ventas</td></tr>`
 }
 // Eliminación de una venta desde el historial con nueva validación de la clave del administrador principal.
 function solicitarEliminacionVenta(id){
@@ -3600,8 +3606,8 @@ function detalleGastosOperativosCierreHtml(gastos){
 function nombreUsuarioCierre(v){return String(v.usuarioVenta||'No registrado').trim()||'No registrado'}
 function importeCierre(v){return Number(v)||0}
 function redondeoCierre(n){return Math.round((Number(n)||0)*100)/100}
-function resumenCierreUsuario(fecha,usuario,usuarioId=''){
- const ventas=db.ventas.filter(v=>v.fecha===fecha&&!esDevuelta(v.id)&&nombreUsuarioCierre(v)===usuario);
+function resumenCierreUsuario(fecha,usuario,usuarioId='',incluirVentaAdminPostCierre=false){
+ const ventas=db.ventas.filter(v=>v.fecha===fecha&&!esDevuelta(v.id)&&nombreUsuarioCierre(v)===usuario&&(incluirVentaAdminPostCierre||v.ventaAdminAtribuida!==true));
  const detalleGastosOperativos=gastosOperativosDelCierre(fecha,usuario,usuarioId).map(g=>({...g,usuario:usuarioGastoOperativo(g)}));
  const gastosOperativos=redondeoCierre(detalleGastosOperativos.reduce((a,g)=>a+Number(g.valor||0),0));
  const r={fecha,usuario,gastosOperativos,detalleGastosOperativos,ventasNetas:0,ventas:0,numVentas:ventas.length,efectivoVentas:0,transferencias:0,chequesVentas:0,chequesAbonos:0,chequesRecibidos:0,chequesDetalle:[],abonosPosterioresEfectivo:0,abonosPosterioresTransferencia:0,ventasCredito:0,abonosIniciales:0,abonosPosteriores:0,sinFormaCobro:0,saldoCreditoDia:0,detalleVentas:ventas};
@@ -3627,7 +3633,7 @@ function resumenCierreUsuario(fecha,usuario,usuarioId=''){
  // Los abonos posteriores se registran en la fecha efectiva de RECEPCIÓN, sin duplicar la venta.
  // Abonos antiguos sin forma identificada conservan el tratamiento histórico en efectivo.
  for(const v of db.ventas){
-   if(v.formaPago!=='credito'||esDevuelta(v.id)||nombreUsuarioCierre(v)!==usuario)continue;
+   if(v.formaPago!=='credito'||esDevuelta(v.id)||nombreUsuarioCierre(v)!==usuario||(!incluirVentaAdminPostCierre&&v.ventaAdminAtribuida===true))continue;
    if(Array.isArray(v.abonosPosteriores))for(const p of v.abonosPosteriores){
      if(p.fecha!==fecha)continue;
      const valor=importeCierre(p.valor),metodo=p.formaPago||'efectivo';
@@ -3682,7 +3688,7 @@ function resumenCierreGeneral(fecha){
  const usuarios=usuariosCierreHoy(fecha);
  const r={fecha,usuario:NOMBRE_CIERRE_GENERAL,numUsuarios:usuarios.length,gastosOperativos:0,ventasNetas:0,detalleGastosOperativos:[],ventas:0,numVentas:0,efectivoVentas:0,transferencias:0,chequesVentas:0,chequesAbonos:0,chequesRecibidos:0,chequesDetalle:[],abonosPosterioresEfectivo:0,abonosPosterioresTransferencia:0,ventasCredito:0,abonosIniciales:0,abonosPosteriores:0,sinFormaCobro:0,saldoCreditoDia:0,detalleVentas:[]};
  for(const usuario of usuarios){
-   const parcial=resumenCierreUsuario(fecha,usuario);
+   const parcial=resumenCierreUsuario(fecha,usuario,'',true);
    for(const campo of ['ventas','numVentas','efectivoVentas','transferencias','chequesVentas','chequesAbonos','chequesRecibidos','abonosPosterioresEfectivo','abonosPosterioresTransferencia','ventasCredito','abonosIniciales','abonosPosteriores','sinFormaCobro','saldoCreditoDia'])r[campo]+=parcial[campo];
    r.detalleVentas.push(...parcial.detalleVentas);
    r.chequesDetalle.push(...parcial.chequesDetalle.map(c=>({...c,usuario})));
@@ -4220,7 +4226,7 @@ async function establecerUsuarioFirebaseGMC(user,perfil,claveIngresada=''){
     if(stopPerfilesGMC)stopPerfilesGMC();
     stopPerfilesGMC=onSnapshot(collection(firestoreGMC,'perfiles'),instantanea=>{
       const vendedores=instantanea.docs.map(d=>d.data()).filter(p=>p.rol==='vendedor').map(p=>({id:p.uid,usuario:p.usuario,nivel:p.nivel||'ventas',modulos:Array.isArray(p.modulos)?p.modulos:[],activo:p.activo,correo:p.correo,firebaseUid:p.uid}));
-      localStorage.setItem(USERS_KEY,JSON.stringify(vendedores));renderUsuarios();
+      localStorage.setItem(USERS_KEY,JSON.stringify(vendedores));renderUsuarios();gmcRenderVentaPostCierre();
     },err=>console.warn('Error al consultar perfiles de usuarios:',err));
   }else{
     adminAutenticado=false;
@@ -4939,6 +4945,42 @@ window.verEvidenciaAsignacion=async id=>{
  }catch(err){alert(err.message||mensajeFirebaseGMC(err));}
 };
 
+// VENTA POSTERIOR AL CIERRE: selector exclusivamente para el administrador Firebase.
+// La atribución es COMERCIAL; el operador y el stock proceden del administrador.
+function gmcVendedoresCerradosHoy(){
+ const dia=today();
+ if(!gmcCierresListos||!gmcVentasListas||!gmcMasterListos.productos||!gmcAsignacionesListas)return [];
+ const usuarios=new Map(cargarUsuarios().filter(u=>u.activo&&u.modulos?.includes('ventas')).map(u=>[String(u.id),u]));
+ return (db.cierres||[]).filter(c=>c.fecha===dia&&['personal','individual'].includes(c.tipo)&&usuarios.has(String(c.usuarioId)))
+  .map(c=>usuarios.get(String(c.usuarioId))).filter((u,i,a)=>a.findIndex(v=>v.id===u.id)===i)
+  .sort((a,b)=>a.usuario.localeCompare(b.usuario,'es'));
+}
+function gmcRenderVentaPostCierre(){
+ const panel=document.getElementById('gmcVentaPostCierrePanel'),select=document.getElementById('gmcVentaPostCierreVendedor');
+ if(!panel||!select)return;
+ const admin=!!adminAutenticado&&firebaseRolGMC==='admin'&&!!firebaseAuthGMC.currentUser;
+ panel.style.display=admin?'':'none';
+ if(!admin){select.value='';return;}
+ const anterior=select.value,usuarios=gmcVendedoresCerradosHoy();
+ select.innerHTML='<option value="">Venta normal a nombre del administrador</option>'+usuarios.map(u=>`<option value="${esc(u.id)}">${esc(u.usuario)} · caja cerrada hoy</option>`).join('');
+ select.value=usuarios.some(u=>u.id===anterior)?anterior:'';
+ gmcCambioVendedorVentaPostCierre();
+}
+function gmcCambioVendedorVentaPostCierre(){
+ const select=document.getElementById('gmcVentaPostCierreVendedor'),aviso=document.getElementById('gmcVentaPostCierreAviso');
+ if(!select||!aviso)return;
+ aviso.textContent=select.value?'El administrador registrará esta venta desde el stock central a nombre del vendedor seleccionado. No reabrirá ni modificará el cierre personal del vendedor.':'Solo aparecen vendedores cuyo cierre personal de hoy ya consta en Firestore. La venta normal del administrador no cambia.';
+}
+function gmcDatosVentaPostCierre(){
+ const id=String(document.getElementById('gmcVentaPostCierreVendedor')?.value||'');
+ if(!id)return null;
+ if(!adminAutenticado||firebaseRolGMC!=='admin'||!firebaseAuthGMC.currentUser)throw Error('Solo el administrador Firebase puede atribuir esta venta.');
+ if((db.cierres||[]).some(c=>c.id==='general_'+today()))throw Error('El cierre general ya está registrado. No puede añadir ventas posteriores al cierre general.');
+ const u=gmcVendedoresCerradosHoy().find(u=>u.id===id);
+ if(!u)throw Error('El vendedor no tiene un cierre personal confirmado hoy o dejó de estar activo.');
+ return {ventaAdminAtribuida:true,operadorVentaUid:firebaseAuthGMC.currentUser.uid,usuarioVentaId:u.id,usuarioVenta:u.usuario,origenStock:'central',cierreVendedorId:u.id+'_'+today()};
+}
+
 // ETAPA 5: ventas centralizadas. Compras, abonos, devoluciones, cierres y Caja Bancos aún no son centrales.
 window.gmcVentasCentralizadas=true;
 function gmcEstadoVentas(texto){const e=document.getElementById('gmcVentasEstado');if(e)e.textContent=texto;}
@@ -4987,6 +5029,8 @@ async function gmcEjecutarVentaFirestore(pendiente){
  const d=pendiente.venta,ventaRef=doc(firestoreGMC,'ventas',d.id),contadorRef=doc(firestoreGMC,'contadores','ventas');
  const cantidades=gmcValidarLineasVenta(d.lineas);
  const vendedor=pendiente.rol==='vendedor';
+ const atribuir=pendiente.rol==='admin'&&d.ventaAdminAtribuida===true;
+ if(atribuir&&(!adminAutenticado||firebaseRolGMC!=='admin'||!d.operadorVentaUid||d.operadorVentaUid!==u.uid||d.origenStock!=='central'||d.fecha!==today()||d.cierreVendedorId!==d.usuarioVentaId+'_'+d.fecha))throw Error('Datos de venta posterior al cierre inválidos. No se guardó.');
  if(vendedor&&!usuarioActual)throw Error('La sesión del vendedor cambió.');
  if(pendiente.rol!==firebaseRolGMC)throw Error('La cuenta o el rol actual no corresponde a esta venta pendiente.');
  gmcVentaEnCurso=true;
@@ -4994,13 +5038,24 @@ async function gmcEjecutarVentaFirestore(pendiente){
   const resultado=await runTransaction(firestoreGMC,async tx=>{
    const ya=await tx.get(ventaRef);
    if(ya.exists()){
-    if(ya.data().usuarioVentaId!==u.uid||ya.data().etapaFirebase!=='etapa5')throw Error('Identificador de venta ya utilizado.');
+    if((ya.data().operadorVentaUid||ya.data().usuarioVentaId)!==u.uid||ya.data().etapaFirebase!=='etapa5')throw Error('Identificador de venta ya utilizado.');
     return {existente:true,numero:ya.data().numero};
    }
    const cierreHoyRef=doc(firestoreGMC,'cierresCaja',u.uid+'_'+today());
    const cierreGeneralRef=doc(firestoreGMC,'cierresCaja','general_'+today());
    const cierreHoy=await tx.get(cierreHoyRef),cierreGeneral=await tx.get(cierreGeneralRef);
    if(cierreHoy.exists()||cierreGeneral.exists())throw Error('La caja del día ya fue cerrada en Firestore. No se registró una venta nueva.');
+   // En la venta excepcional es obligatorio que el vendedor tenga un cierre YA confirmado.
+   // El cierre de caja y el perfil se vuelven a leer dentro de la misma transacción.
+   let perfilAtribuido=null;
+   if(atribuir){
+    if(!d.usuarioVentaId||d.usuarioVentaId===u.uid)throw Error('Seleccione un vendedor diferente del administrador.');
+    const cierreVendedor=await tx.get(doc(firestoreGMC,'cierresCaja',d.cierreVendedorId));
+    if(!cierreVendedor.exists()||cierreVendedor.data().usuarioId!==d.usuarioVentaId||cierreVendedor.data().fecha!==d.fecha||!['personal','individual'].includes(cierreVendedor.data().tipo))throw Error('No existe un cierre personal válido del vendedor para hoy.');
+    const perfil=await tx.get(doc(firestoreGMC,'perfiles',d.usuarioVentaId));
+    if(!perfil.exists()||perfil.data().rol!=='vendedor'||perfil.data().activo!==true||!Array.isArray(perfil.data().modulos)||!perfil.data().modulos.includes('ventas'))throw Error('Vendedor sin perfil activo autorizado para ventas.');
+    perfilAtribuido=perfil.data();
+   }
    const contador=await tx.get(contadorRef);
    // Todas las lecturas deben ocurrir ANTES de cualquier escritura de la transacción.
    const refs=vendedor?(db.stockUsuarios||[]).filter(a=>a.estado==='abierta'&&a.usuarioId===u.uid&&cantidades.has(a.productoId)).map(a=>({id:a.id,productoId:a.productoId,ref:doc(firestoreGMC,'stockUsuarios',a.id)})):[...cantidades.keys()].map(id=>({id,productoId:id,ref:doc(firestoreGMC,'productos',id)}));
@@ -5030,7 +5085,7 @@ async function gmcEjecutarVentaFirestore(pendiente){
    }
    const secuencia=Number(contador.exists()?contador.data().ultimo||0:0)+1;
    const numero=String(secuencia).padStart(6,'0');
-   const documento={...d,numero,usuarioVentaId:u.uid,etapaFirebase:'etapa5',secuencia,stockConsumos:consumos,consumoProductos:Object.fromEntries(cantidades),...(vendedor?{stockDistribucion:plan}:{}),registradoEn:new Date().toISOString()};
+   const documento={...d,numero,usuarioVentaId:atribuir?d.usuarioVentaId:u.uid,usuarioVenta:atribuir?perfilAtribuido.usuario:d.usuarioVenta,etapaFirebase:'etapa5',secuencia,stockConsumos:consumos,consumoProductos:Object.fromEntries(cantidades),...(vendedor?{stockDistribucion:plan}:{}),registradoEn:new Date().toISOString()};
    tx.set(ventaRef,documento);
    tx.set(contadorRef,{ultimo:secuencia,ultimaVentaId:d.id});
    for(const m of modificados)tx.update(m.ref,m.esAsignacion?{restante:gmcRedondear6(m.antes-m.cantidad),ultimaVentaId:d.id}:{stock:gmcRedondear6(m.antes-m.cantidad),ultimaVentaId:d.id});
@@ -5049,6 +5104,7 @@ async function gmcEjecutarVentaFirestore(pendiente){
   // La suscripción onSnapshot carga las ventas confirmadas. Nunca se modifica db.ventas ni el stock local al enviar.
   if(pendiente.origen==='rapida'){
    ventaRapidaLineas=[];ventaRapidaSeleccion=-1;ventaClienteActivo=null;ventaClienteNombreActivo='';ventaPvpActivo=1;ventaCategoriaActual='Todas';
+   const selectorPost=document.getElementById('gmcVentaPostCierreVendedor');if(selectorPost)selectorPost.value='';gmcCambioVendedorVentaPostCierre();
    window.gmcFechaVentaManual=false;document.getElementById('rvComentario').value='';document.getElementById('rvFecha').value=today();document.getElementById('ventaPvpInicio').value='1';
   }else{tempLineas=[];}
   cerrarModal();renderAll();
@@ -5111,7 +5167,9 @@ window.gmcGuardarVentaRapidaFirebase=async()=>{
   // antigua si el navegador lo había restaurado o la venta quedó abierta.
   const fechaVenta=window.gmcFechaVentaManual?document.getElementById('rvFecha').value:today();
   document.getElementById('rvFecha').value=fechaVenta;
-  const d={id:gmcIdVentaSeguro(),fecha:fechaVenta,numero:'',terceroId:ventaClienteActivo,tercero:c?.nombre||ventaClienteNombreActivo||'Consumidor final',usuarioVenta:usuarioQueRealizoVenta(),comentario:document.getElementById('rvComentario')?.value.trim()||'',lineas:ventaRapidaLineas.map(x=>({...x})),base:ventaRapidaLineas.reduce((a,l)=>a+Number(l.base||0),0),total,costo:ventaRapidaLineas.reduce((a,l)=>a+Number(l.costo||0)*Number(l.cantidad||0),0),formaPago,abono,saldo,...(formaPago==='mixto'?{pagoEfectivo,pagoTransferencia}:{}),...datosCheque,abonoInicial:formaPago==='credito'?abono:0,abonosPosteriores:[]};
+  const atribucion=gmcDatosVentaPostCierre();
+  if(atribucion&&fechaVenta!==today())throw Error('La venta posterior al cierre debe registrarse con la fecha actual del sistema.');
+  const d={id:gmcIdVentaSeguro(),fecha:fechaVenta,numero:'',terceroId:ventaClienteActivo,tercero:c?.nombre||ventaClienteNombreActivo||'Consumidor final',usuarioVenta:usuarioQueRealizoVenta(),comentario:document.getElementById('rvComentario')?.value.trim()||'',lineas:ventaRapidaLineas.map(x=>({...x})),base:ventaRapidaLineas.reduce((a,l)=>a+Number(l.base||0),0),total,costo:ventaRapidaLineas.reduce((a,l)=>a+Number(l.costo||0)*Number(l.cantidad||0),0),formaPago,abono,saldo,...(formaPago==='mixto'?{pagoEfectivo,pagoTransferencia}:{}),...datosCheque,abonoInicial:formaPago==='credito'?abono:0,abonosPosteriores:[],...(atribucion||{})};
   await gmcCrearVentaPendiente(d,'rapida');
  }catch(err){alert(err.message||mensajeFirebaseGMC(err));}
 };
@@ -5380,11 +5438,11 @@ function gmcSuscribirCierresFirebase(uidSesion){
   gmcCierresListos=!snap.metadata.fromCache&&!snap.metadata.hasPendingWrites;
   gmcAvisoCierres(snap.metadata.fromCache?'Cierres en caché. Espere confirmación del servidor antes de cerrar.':snap.metadata.hasPendingWrites?'Hay cierres pendientes de confirmar.':'Cierres conectados a Firestore · '+db.cierres.length+' registro(s) visibles.');
   try{localStorage.setItem(KEY,JSON.stringify(db))}catch(error){console.warn('Respaldo local de cierres',error)}
-  gmcMostrarCierrePendiente();renderAll();
+  gmcMostrarCierrePendiente();renderAll();gmcRenderVentaPostCierre();
  },error=>{
   if(gmcMasterSesion!==uidSesion)return;
   gmcCierresListos=false;db.cierres=[];
-  gmcAvisoCierres('No se pudo leer cierres de Firestore: '+mensajeFirebaseGMC(error));renderAll();
+  gmcAvisoCierres('No se pudo leer cierres de Firestore: '+mensajeFirebaseGMC(error));renderAll();gmcRenderVentaPostCierre();
  });
  gmcMostrarCierrePendiente();
 }
