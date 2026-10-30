@@ -237,6 +237,15 @@
     .venta-prod-cuerpo{padding:8px}
     .actions .btn{max-width:100%;white-space:normal}
   }
+  /* GMC: menú Administrador compacto en pantallas pequeñas. SOLO presentación. */
+  @media screen and (max-width:600px){
+    #administrador > .card{padding:12px}
+    #administrador > .card > .actions{display:flex;align-items:center!important;gap:8px;flex-wrap:nowrap}
+    #administrador > .card > .actions > h3{margin:0;font-size:15px;line-height:1.2;flex:1 1 0;min-width:0}
+    #administrador > .card > .actions > .btn{padding:7px 9px;font-size:11px;line-height:1.25;flex:0 1 auto;max-width:57%;white-space:normal;text-align:center}
+    #administrador > .card > .grid.g3{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:10px!important}
+    #administrador > .card > .grid.g3 > .card.quick{min-width:0;min-height:42px;padding:7px 6px;font-size:11.5px;line-height:1.2;overflow-wrap:anywhere;border-radius:8px}
+  }
   /* Exclusivamente presentación de egresos y abonos en cierres de caja. */
   .cierre-egreso{color:#c93434!important;font-weight:700}
   .cierre-abono{color:#0f5aa8!important;font-weight:700}
