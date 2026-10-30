@@ -761,7 +761,7 @@
     <section id="cajaBancos" class="section">
       <div class="card">
         <div class="actions" style="justify-content:space-between;align-items:center"><h3>🏦 Caja Bancos · Cuentas bancarias</h3><button class="btn btn-primary" onclick="modalCuentaBancaria()">+ Crear cuenta</button></div>
-        <p class="note">Cada cuenta dispone de su saldo inicial y sus movimientos independientes. Saldo actual = saldo inicial + depósitos registrados − gastos administrativos vinculados. Las transferencias de ventas se ingresan una sola vez en la cuenta que elija; no se acreditan sin seleccionar el banco. Los gastos operativos de vendedores y los cierres diarios no se modifican.</p>
+        <p class="note">Cada cuenta dispone de su saldo inicial y sus movimientos independientes. Saldo actual = saldo inicial + depósitos registrados + traspasos recibidos − traspasos enviados − gastos administrativos vinculados. Las transferencias de ventas se ingresan una sola vez en la cuenta que elija; no se acreditan sin seleccionar el banco. Los gastos operativos de vendedores y los cierres diarios no se modifican.</p>
         <div class="note" id="gmcEstadoCajaBancos" style="margin-top:12px">Caja Bancos: esperando autenticación y Firestore.</div>
         <div class="actions" style="margin-top:9px;flex-wrap:wrap"><button class="btn btn-light" onclick="gmcVerificarOperacionBanco()">Comprobar operación pendiente</button><button class="btn btn-light" id="gmcBtnMigrarBancos" style="display:none" onclick="gmcMigrarCajaBancos()">Migrar mis registros bancarios locales (una sola vez)</button></div>
         <div id="bancosCuentas" class="grid g3" style="margin-top:12px"></div>
@@ -770,7 +770,7 @@
         <h3>Movimientos y depósitos</h3>
         <div class="row">
           <div class="c6"><label>Cuenta bancaria a consultar</label><select id="bancoCuentaSeleccionada" onchange="renderCajaBancos()"></select></div>
-          <div class="c6" style="display:flex;align-items:end;gap:8px"><button class="btn btn-success" onclick="modalDepositoBancario()">+ Registrar depósito</button></div>
+          <div class="c6" style="display:flex;align-items:end;gap:8px;flex-wrap:wrap"><button class="btn btn-success" onclick="modalDepositoBancario()">+ Registrar depósito</button><button class="btn btn-primary" id="gmcBotonTraspasoBancario" onclick="modalTraspasoBancario()">⇄ Transferir entre cuentas</button></div>
         </div>
         <div id="bancoResumen" style="margin-top:14px"></div>
         <div class="table-wrap" style="margin-top:12px"><table><thead><tr><th>Fecha</th><th>Movimiento</th><th>Descripción / referencia</th><th>Ingreso</th><th>Egreso</th><th>Saldo</th></tr></thead><tbody id="bancoMovimientos"></tbody></table></div>
@@ -3064,9 +3064,11 @@ const bancoCentavos=n=>Math.round((Number(n)||0)*100);
 const bancoImporteValido=n=>Number.isFinite(n)&&n>0&&Math.abs(n*100-Math.round(n*100))<0.000001;
 function bancoSaldoCuenta(id){
  const c=(db.cuentasBancarias||[]).find(x=>x.id===id);if(!c)return 0;
- const ingresos=(db.movimientosBancarios||[]).filter(x=>x.cuentaId===id).reduce((s,x)=>s+bancoCentavos(x.valor),0);
+ const movimientos=(db.movimientosBancarios||[]).filter(x=>x.cuentaId===id);
+ const ingresos=movimientos.filter(x=>x.tipo!=='traspaso_salida').reduce((s,x)=>s+bancoCentavos(x.valor),0);
+ const traspasosEnviados=movimientos.filter(x=>x.tipo==='traspaso_salida').reduce((s,x)=>s+bancoCentavos(x.valor),0);
  const gastos=(db.gastos||[]).filter(x=>x.cuentaBancariaId===id).reduce((s,x)=>s+bancoCentavos(x.valor),0);
- return (bancoCentavos(c.saldoInicial)+ingresos-gastos)/100;
+ return (bancoCentavos(c.saldoInicial)+ingresos-traspasosEnviados-gastos)/100;
 }
 function bancoOpcionesCuentas(){
  return (db.cuentasBancarias||[]).map(c=>`<option value="${esc(c.id)}">${esc(c.banco)} · ${esc(c.nombre)}${c.numero?' · '+esc(c.numero):''}</option>`).join('');
@@ -3157,6 +3159,33 @@ function guardarDepositoBancario(){
  db.movimientosBancarios.push({id:uid(),cuentaId,fecha,tipo,origenId,valor:bancoCentavos(valor)/100,descripcion,referencia});
  audit('DEPÓSITO BANCARIO',descripcion+' · '+money(valor)+' · Cuenta '+cuentaId);
  cerrarModal();save();document.getElementById('bancoCuentaSeleccionada').value=cuentaId;renderCajaBancos();
+}
+// Transferencia interna entre dos cuentas existentes: NO es un ingreso externo ni un gasto.
+function modalTraspasoBancario(){
+ if(!adminAutenticado)return abrirAccesoAdmin('cajaBancos');
+ const cuentas=db.cuentasBancarias||[];
+ if(cuentas.length<2)return alert('Registre al menos dos cuentas bancarias para transferir fondos entre ellas.');
+ const actual=document.getElementById('bancoCuentaSeleccionada')?.value||cuentas[0].id;
+ openModal('Transferencia entre cuentas propias',`<p class="note">El valor se descontará de la cuenta de origen y se acreditará a la cuenta de destino en una única operación centralizada. No se registra como ingreso externo ni como gasto administrativo.</p><div class="row">
+ <div class="c6"><label>Cuenta de origen</label><select id="trBancoOrigen" onchange="actualizarVistaTraspasoBanco()">${bancoOpcionesCuentas()}</select></div>
+ <div class="c6"><label>Cuenta de destino</label><select id="trBancoDestino" onchange="actualizarVistaTraspasoBanco()">${bancoOpcionesCuentas()}</select></div>
+ <div class="c6"><label>Fecha de la transferencia</label><input id="trBancoFecha" type="date" value="${today()}" max="${today()}"></div>
+ <div class="c6"><label>Valor ($)</label><input id="trBancoValor" type="number" min="0.01" step="0.01" oninput="actualizarVistaTraspasoBanco()"></div>
+ <div class="c12"><label>Comprobante / referencia (opcional)</label><input id="trBancoReferencia" maxlength="200" placeholder="Número de transferencia o depósito"></div>
+ </div><p class="note" id="trBancoResumen" style="margin-top:10px"></p><button class="btn btn-success" style="margin-top:12px" onclick="guardarTraspasoBancario()">Confirmar transferencia entre cuentas</button>`);
+ if(cuentas.some(x=>x.id===actual))document.getElementById('trBancoOrigen').value=actual;
+ const distinto=cuentas.find(x=>x.id!==document.getElementById('trBancoOrigen').value);
+ if(distinto)document.getElementById('trBancoDestino').value=distinto.id;
+ actualizarVistaTraspasoBanco();
+}
+function actualizarVistaTraspasoBanco(){
+ const origen=document.getElementById('trBancoOrigen')?.value,destino=document.getElementById('trBancoDestino')?.value;
+ const cOrigen=(db.cuentasBancarias||[]).find(c=>c.id===origen),cDestino=(db.cuentasBancarias||[]).find(c=>c.id===destino),v=Number(document.getElementById('trBancoValor')?.value||0);
+ const r=document.getElementById('trBancoResumen');if(!r)return;
+ if(!cOrigen||!cDestino){r.textContent='Seleccione ambas cuentas.';return;}
+ if(origen===destino){r.textContent='La cuenta de origen y destino deben ser distintas.';return;}
+ const saldo=bancoSaldoCuenta(origen);
+ r.textContent='Saldo de origen: '+money(saldo)+' · Destino: '+cDestino.banco+' · '+cDestino.nombre+(v>0?' · Saldo estimado tras transferir: '+money(saldo-v):'');
 }
 function vincularGastoCuenta(id){
  if(!adminPuedeCorregirGasto())return alert('Solo el administrador puede asociar cuentas a gastos históricos.');
@@ -3275,13 +3304,15 @@ function renderCajaBancos(){
  if(cuentas.some(c=>c.id===actual))selector.value=actual;
  const cuenta=cuentas.find(c=>c.id===selector.value);
  if(!cuenta){resumen.innerHTML='';tabla.innerHTML='<tr><td colspan="6" class="empty">Sin cuentas bancarias registradas.</td></tr>';return}
- const ingresos=(db.movimientosBancarios||[]).filter(m=>m.cuentaId===cuenta.id).map(m=>({...m,ingreso:bancoCentavos(m.valor),egreso:0,orden:1}));
- const egresos=(db.gastos||[]).filter(g=>g.cuentaBancariaId===cuenta.id).map(g=>({id:g.id,fecha:g.fecha,tipo:'gasto',descripcion:g.categoria+' · '+g.concepto,referencia:g.documento||g.tercero||'',ingreso:0,egreso:bancoCentavos(g.valor),orden:2}));
- const ordenados=[...ingresos,...egresos].sort((a,b)=>String(a.fecha||'').localeCompare(String(b.fecha||''))||a.orden-b.orden||String(a.id).localeCompare(String(b.id)));
- const totIngreso=ingresos.reduce((s,m)=>s+m.ingreso,0),totEgreso=egresos.reduce((s,m)=>s+m.egreso,0);
- resumen.innerHTML=`<div class="grid g4"><div class="card kpi"><small>Saldo inicial</small><strong>${money(cuenta.saldoInicial)}</strong></div><div class="card kpi"><small>Depósitos</small><strong>${money(totIngreso/100)}</strong></div><div class="card kpi"><small>Gastos administrativos</small><strong>${money(totEgreso/100)}</strong></div><div class="card kpi"><small>Saldo actual</small><strong>${money(bancoSaldoCuenta(cuenta.id))}</strong></div></div>`;
+ const movs=(db.movimientosBancarios||[]).filter(m=>m.cuentaId===cuenta.id);
+ const ingresos=movs.filter(m=>m.tipo!=='traspaso_salida').map(m=>({...m,ingreso:bancoCentavos(m.valor),egreso:0,orden:1}));
+ const traspasosEnviados=movs.filter(m=>m.tipo==='traspaso_salida').map(m=>({...m,ingreso:0,egreso:bancoCentavos(m.valor),orden:2}));
+ const gastos=(db.gastos||[]).filter(g=>g.cuentaBancariaId===cuenta.id).map(g=>({id:g.id,fecha:g.fecha,tipo:'gasto',descripcion:g.categoria+' · '+g.concepto,referencia:g.documento||g.tercero||'',ingreso:0,egreso:bancoCentavos(g.valor),orden:3}));
+ const ordenados=[...ingresos,...traspasosEnviados,...gastos].sort((a,b)=>String(a.fecha||'').localeCompare(String(b.fecha||''))||a.orden-b.orden||String(a.id).localeCompare(String(b.id)));
+ const totIngreso=ingresos.reduce((s,m)=>s+m.ingreso,0),totEgreso=gastos.reduce((s,m)=>s+m.egreso,0),totTraspasosSalida=traspasosEnviados.reduce((s,m)=>s+m.egreso,0);
+ resumen.innerHTML=`<div class="grid g4"><div class="card kpi"><small>Saldo inicial</small><strong>${money(cuenta.saldoInicial)}</strong></div><div class="card kpi"><small>Depósitos e ingresos internos</small><strong>${money(totIngreso/100)}</strong></div><div class="card kpi"><small>Gastos y traspasos enviados</small><strong>${money((totEgreso+totTraspasosSalida)/100)}</strong></div><div class="card kpi"><small>Saldo actual</small><strong>${money(bancoSaldoCuenta(cuenta.id))}</strong></div></div>`;
  let saldo=bancoCentavos(cuenta.saldoInicial);
- tabla.innerHTML=ordenados.map(m=>{saldo+=m.ingreso-m.egreso;return `<tr><td>${esc(m.fecha)}</td><td>${m.egreso?'Gasto administrativo':m.tipo==='transferencia_venta'?'Transferencia venta / abono':m.tipo==='cheque_efectivizado'?'Cheque efectivizado':'Depósito'}</td><td>${esc(m.descripcion||'')}${m.referencia?'<br><small>'+esc(m.referencia)+'</small>':''}</td><td>${m.ingreso?money(m.ingreso/100):'—'}</td><td>${m.egreso?money(m.egreso/100):'—'}</td><td><b>${money(saldo/100)}</b></td></tr>`}).join('')||'<tr><td colspan="6" class="empty">Sin movimientos. El saldo corresponde al saldo inicial.</td></tr>';
+ tabla.innerHTML=ordenados.map(m=>{saldo+=m.ingreso-m.egreso;const tipo=m.tipo==='traspaso_salida'?'Transferencia enviada':m.tipo==='traspaso_entrada'?'Transferencia recibida':m.tipo==='gasto'?'Gasto administrativo':m.tipo==='transferencia_venta'?'Transferencia venta / abono':m.tipo==='cheque_efectivizado'?'Cheque efectivizado':'Depósito';return `<tr><td>${esc(m.fecha)}</td><td>${tipo}</td><td>${esc(m.descripcion||'')}${m.referencia?'<br><small>'+esc(m.referencia)+'</small>':''}</td><td>${m.ingreso?money(m.ingreso/100):'—'}</td><td>${m.egreso?money(m.egreso/100):'—'}</td><td><b>${money(saldo/100)}</b></td></tr>`}).join('')||'<tr><td colspan="6" class="empty">Sin movimientos. El saldo corresponde al saldo inicial.</td></tr>';
 }
 
 function modalGasto(){
@@ -6181,7 +6212,7 @@ function gmcBancoActualizarVista(){
  const pendientes=gmcBancoColecciones.filter(k=>!gmcBancoListos[k]);
  if(!listo){gmcBancoEstado('Caja Bancos: esperando confirmación del servidor ('+pendientes.join(', ')+'). No registre movimientos.');return;}
  const cuentaNum=(db.cuentasBancarias||[]).length,pend=gmcBancoPendiente();
- gmcBancoEstado('Caja Bancos conectado a Cloud Firestore · '+cuentaNum+' cuenta(s), '+(db.movimientosBancarios||[]).length+' ingreso(s), '+(db.gastos||[]).length+' gasto(s) administrativo(s).'+(pend?' ATENCIÓN: existe una operación pendiente: compruébela antes de continuar.':''));
+ gmcBancoEstado('Caja Bancos conectado a Cloud Firestore · '+cuentaNum+' cuenta(s), '+(db.movimientosBancarios||[]).length+' movimiento(s), '+(db.gastos||[]).length+' gasto(s) administrativo(s).'+(pend||gmcTraspasoPendiente()?' ATENCIÓN: existe una operación pendiente: compruébela antes de continuar.':''));
  const r=(()=>{try{return JSON.parse(localStorage.getItem(gmcBancoRespaldoClave())||'null')}catch{return null}})();
  const hayHist=r&&(r.cuentasBancarias.length||r.movimientosBancarios.length||r.gastos.length||r.historialCambiosGastos.length||Object.keys(r.gestionCheques||{}).length);
  const yaDatos=gmcBancoColecciones.some(k=>(gmcBancoDatos[k]||[]).length>0);
@@ -6248,7 +6279,7 @@ async function gmcBancoAplicarPendiente(p){
  }finally{gmcBancoOcupado=false;}
 }
 async function gmcBancoCrearPendiente(tipo,registro){
- gmcBancoExigir();if(gmcBancoPendiente())throw Error('Hay una operación bancaria pendiente. Pulse «Comprobar operación pendiente» antes de registrar otra.');
+ gmcBancoExigir();if(gmcBancoPendiente()||gmcTraspasoPendiente())throw Error('Hay una operación bancaria pendiente. Pulse «Comprobar operación pendiente» antes de registrar otra.');
  const p={tipo,registro,uid:firebaseAuthGMC.currentUser.uid};localStorage.setItem(gmcBancoPendienteClave(),JSON.stringify(p));
  return gmcBancoAplicarPendiente(p);
 }
@@ -6285,6 +6316,64 @@ window.guardarDepositoBancario=async()=>{
   const registro={id:origenId?gmcBancoDocIdOrigen(origenId):uid(),cuentaId,fecha,tipo,origenId,valor:bancoCentavos(valor)/100,descripcion,referencia,etapaFirebase:'etapa9',operadorId:firebaseAuthGMC.currentUser.uid};
   await gmcBancoCrearPendiente('movimiento',registro);
  }catch(e){gmcBancoAviso(e)}
+};
+// Traspaso bancario doble: dos asientos enlazados, creados de manera atómica.
+// Registro pendiente permite reintento exacto, sin duplicación por identificadores deterministas.
+const gmcTraspasoClave=()=> 'gmc_etapa9_traspaso_pendiente_'+(firebaseAuthGMC.currentUser?.uid||'sin_sesion');
+function gmcTraspasoPendiente(){try{return JSON.parse(localStorage.getItem(gmcTraspasoClave())||'null')}catch{return null}}
+async function gmcAplicarTraspaso(p){
+ gmcBancoExigir();
+ if(!p||p.uid!==firebaseAuthGMC.currentUser.uid)throw Error('La transferencia pendiente corresponde a otra sesión.');
+ const {origenId,destinoId,fecha,valor,referencia,id}=p;
+ if(!/^[a-z0-9]{8,32}$/.test(id)||!gmcBancoCuentaValida(origenId)||!gmcBancoCuentaValida(destinoId)||origenId===destinoId||!gmcBancoFechaValida(fecha)||fecha>gmcBancoFecha()||!gmcBancoImporte(valor)||typeof referencia!=='string'||referencia.length>200)throw Error('La transferencia pendiente contiene datos inválidos.');
+ const refOrigen=doc(firestoreGMC,'cuentasBancarias',origenId),refDestino=doc(firestoreGMC,'cuentasBancarias',destinoId);
+ const refSalida=doc(firestoreGMC,'movimientosBancarios','traspaso_'+id+'_salida'),refEntrada=doc(firestoreGMC,'movimientosBancarios','traspaso_'+id+'_entrada');
+ gmcBancoOcupado=true;
+ try{
+  const resultado=await runTransaction(firestoreGMC,async tx=>{
+   const [sa,sb,ca,cb]=await Promise.all([tx.get(refSalida),tx.get(refEntrada),tx.get(refOrigen),tx.get(refDestino)]);
+   if(sa.exists()||sb.exists()){
+    const a=sa.data(),b=sb.data();
+    if(sa.exists()&&sb.exists()&&a.cuentaId===origenId&&b.cuentaId===destinoId&&a.origenId===id&&b.origenId===id&&a.valor===valor&&b.valor===valor&&a.fecha===fecha&&b.fecha===fecha&&a.referencia===referencia&&b.referencia===referencia&&a.tipo==='traspaso_salida'&&b.tipo==='traspaso_entrada'&&a.operadorId===p.uid&&b.operadorId===p.uid)return 'existente';
+    throw Error('La transferencia ya está registrada de forma distinta. No se duplicará ni completará parcialmente.');
+   }
+   if(!ca.exists()||!cb.exists())throw Error('Una de las cuentas bancarias ya no existe en Firestore.');
+   // El saldo mostrado proviene exclusivamente de los movimientos sincronizados con el servidor.
+   if(bancoCentavos(bancoSaldoCuenta(origenId))<bancoCentavos(valor))throw Error('Saldo insuficiente en la cuenta de origen. Compruebe los movimientos recientes antes de transferir.');
+   const uidOperador=firebaseAuthGMC.currentUser.uid,origen=ca.data(),destino=cb.data();
+   const nombreOrigen=String(origen.banco||'')+' · '+String(origen.nombre||'');
+   const nombreDestino=String(destino.banco||'')+' · '+String(destino.nombre||'');
+   const comun={fecha,origenId:id,valor,referencia,etapaFirebase:'etapa9',operadorId:uidOperador};
+   tx.set(refSalida,{...comun,id:refSalida.id,cuentaId:origenId,tipo:'traspaso_salida',descripcion:'Transferencia interna a '+nombreDestino,creadoServidor:serverTimestamp()});
+   tx.set(refEntrada,{...comun,id:refEntrada.id,cuentaId:destinoId,tipo:'traspaso_entrada',descripcion:'Transferencia interna desde '+nombreOrigen,creadoServidor:serverTimestamp()});
+   return 'nuevo';
+  });
+  localStorage.removeItem(gmcTraspasoClave());gmcBancoActualizarVista();cerrarModal();
+  alert(resultado==='nuevo'?'Transferencia bancaria registrada en ambas cuentas de Firestore.':'La transferencia ya estaba registrada en ambas cuentas; no se ha duplicado.');
+  return resultado;
+ }finally{gmcBancoOcupado=false;}
+}
+window.guardarTraspasoBancario=async()=>{
+ try{
+  gmcBancoExigir();
+  if(gmcBancoPendiente()||gmcTraspasoPendiente())throw Error('Compruebe primero la operación bancaria pendiente.');
+  const origenId=document.getElementById('trBancoOrigen')?.value,destinoId=document.getElementById('trBancoDestino')?.value,fecha=document.getElementById('trBancoFecha')?.value,valor=Number(document.getElementById('trBancoValor')?.value),referencia=document.getElementById('trBancoReferencia')?.value.trim()||'';
+  if(!gmcBancoCuentaValida(origenId)||!gmcBancoCuentaValida(destinoId)||origenId===destinoId)throw Error('Seleccione dos cuentas bancarias diferentes.');
+  if(!gmcBancoFechaValida(fecha)||fecha>gmcBancoFecha())throw Error('Seleccione una fecha válida que no sea futura.');
+  if(!gmcBancoImporte(valor)||referencia.length>200)throw Error('Importe o referencia no válidos.');
+  if(bancoCentavos(bancoSaldoCuenta(origenId))<bancoCentavos(valor))throw Error('Saldo insuficiente en la cuenta de origen.');
+  const v=bancoCentavos(valor)/100;
+  if(!confirm('¿Transferir '+money(v)+' desde '+(db.cuentasBancarias.find(c=>c.id===origenId)?.nombre||'origen')+' hacia '+(db.cuentasBancarias.find(c=>c.id===destinoId)?.nombre||'destino')+'? Se crearán un egreso y un ingreso relacionados.'))return;
+  const p={id:uid(),uid:firebaseAuthGMC.currentUser.uid,origenId,destinoId,fecha,valor:v,referencia};
+  localStorage.setItem(gmcTraspasoClave(),JSON.stringify(p));
+  await gmcAplicarTraspaso(p);
+ }catch(e){gmcBancoAviso(e)}
+};
+const gmcBancoVerificacionPrevia=window.gmcVerificarOperacionBanco;
+window.gmcVerificarOperacionBanco=async()=>{
+ const pendiente=gmcTraspasoPendiente();
+ if(!pendiente)return gmcBancoVerificacionPrevia();
+ try{await gmcAplicarTraspaso(pendiente)}catch(e){gmcBancoAviso(e)}
 };
 // Los gastos administrativos se guardan junto a las cuentas en Firestore.
 window.guardarGasto=async()=>{
