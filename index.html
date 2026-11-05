@@ -246,6 +246,12 @@
     #administrador > .card > .grid.g3{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:10px!important}
     #administrador > .card > .grid.g3 > .card.quick{min-width:0;min-height:42px;padding:7px 6px;font-size:11.5px;line-height:1.2;overflow-wrap:anywhere;border-radius:8px}
   }
+  /* Venta desde Rutas: el mismo formulario de Ventas en una vista temporal. */
+  .gmc-venta-ruta-superpuesta{position:fixed;inset:0;z-index:19;overflow-y:auto;overscroll-behavior:contain;background:#f5f7fb;padding:12px}
+  .gmc-venta-ruta-cabecera{position:sticky;top:-12px;z-index:2;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;margin:-12px -12px 12px;background:#0b3d73;color:white}
+  .gmc-venta-ruta-cabecera .btn{flex-shrink:0}
+  .gmc-venta-ruta-contenido{max-width:1380px;margin:0 auto}
+  @media(max-width:620px){.gmc-venta-ruta-superpuesta{padding:8px}.gmc-venta-ruta-cabecera{top:-8px;margin:-8px -8px 8px;padding:9px;gap:8px}.gmc-venta-ruta-cabecera .btn{font-size:12px;padding:8px}}
   /* Exclusivamente presentación de egresos y abonos en cierres de caja. */
   .cierre-egreso{color:#c93434!important;font-weight:700}
   .cierre-abono{color:#0f5aa8!important;font-weight:700}
@@ -2153,10 +2159,11 @@ function renderRutas(){
     // El abono de Rutas reutiliza el mismo formulario y la misma autorización de Mis créditos.
     // Si una venta pertenece a otro vendedor, se conserva como consulta sin permitir abonarla.
     const detalle=creditos.length?`<details><summary style="cursor:pointer;color:var(--azul2);font-weight:700">Ver ${creditos.length} factura(s)</summary><div class="table-wrap" style="margin-top:8px"><table><thead><tr><th>Factura</th><th>Fecha</th><th>Vencimiento</th><th>Saldo</th><th>Estado</th><th>Abono</th></tr></thead><tbody>${creditos.map(v=>`<tr><td>${esc(v.numero||'S/N')}</td><td>${esc(v.fecha||'—')}</td><td>${esc(v.fechaVencimiento||fechaVencimientoCredito(v.fecha)||'—')}</td><td>${money(saldoCredito(v))}</td><td>${creditoVencido(v)?'<span class="danger">Vencida</span>':'Pendiente'}</td><td>${esAdmin||creditoPerteneceUsuario(v)?`<button type="button" class="btn btn-success" style="padding:6px 9px;font-size:12px" data-venta-id="${esc(v.id)}" data-cliente-id="${esc(c.id)}" onclick="gmcAbonarDesdeRutas(this.dataset.ventaId,this.dataset.clienteId)">Abonar</button>`:'<span class="muted">Solo consulta</span>'}</td></tr>`).join('')}</tbody></table></div></details>`:'—';
+    const venderDesdeRuta=esUsuarioRuta&&usuarioActual.modulos.includes('ventas')?`<div style="margin-top:5px"><button type="button" class="btn btn-primary" style="padding:6px 10px;font-size:12px" data-cliente-id="${esc(c.id)}" onclick="gmcVenderDesdeRuta(this.dataset.clienteId)">🛒 Vender</button></div>`:'';
     const yaVisitado=visitaEstado.marcados.has(String(c.id))&&estadoCorrecto;
     const deshabilitado=!visitasConfirmadas||window.gmcVisitaEscribiendo?.has(today()+'|'+c.id);
     const casilla=esUsuarioRuta?`<input type="checkbox" aria-label="Marcar visitado: ${esc(c.nombreCliente||c.razonSocial||c.nombre||'cliente')}" data-cliente-id="${esc(String(c.id))}" ${yaVisitado?'checked':''} ${deshabilitado?'disabled':''} onchange="gmcMarcarVisitaRuta(this.dataset.clienteId,this.checked)" style="width:20px;height:20px;cursor:pointer">`:'—';
-    return {cliente:c,html:`<tr><td style="text-align:center">${casilla}</td><td>${esc(c.ruta||'—')}</td><td><strong>${numeroVisita}</strong></td><td>${esc(c.nombreCliente??(c.razonSocial?'':c.nombre||''))}</td><td>${esc(c.razonSocial||'')}</td><td>${esc(c.identificacion||'')}</td><td>${esc(c.diaVisita||'—')}</td><td>${esc(vendedor)}</td><td>${esc(c.telefono||'')}</td><td>${esc(c.direccion||'')}</td><td>${creditos.length}</td><td><strong class="${saldo>0?'danger':''}">${money(saldo)}</strong></td><td>${detalle}</td></tr>`};
+    return {cliente:c,html:`<tr><td style="text-align:center">${casilla}</td><td>${esc(c.ruta||'—')}</td><td><strong>${numeroVisita}</strong></td><td>${esc(c.nombreCliente??(c.razonSocial?'':c.nombre||''))}${venderDesdeRuta}</td><td>${esc(c.razonSocial||'')}</td><td>${esc(c.identificacion||'')}</td><td>${esc(c.diaVisita||'—')}</td><td>${esc(vendedor)}</td><td>${esc(c.telefono||'')}</td><td>${esc(c.direccion||'')}</td><td>${creditos.length}</td><td><strong class="${saldo>0?'danger':''}">${money(saldo)}</strong></td><td>${detalle}</td></tr>`};
   });
   const filasFiltradas25=filasRutas25.filter(f=>gmcCoincideCliente25(f.cliente,document.getElementById('gmcBuscarRutas25')?.value||''));
   const paginaRutas25=gmcPagina25(filasFiltradas25,gmcPaginaRutas25);
@@ -2171,6 +2178,66 @@ function renderRutas(){
 }
 
 
+// Venta desde Rutas: presenta el formulario ORIGINAL de ventas sobre la ruta.
+// No hay un segundo proceso de facturación ni una escritura adicional a Firestore.
+let gmcVentaRutaActiva=null;
+function gmcVenderDesdeRuta(clienteId){
+ if(gmcVentaRutaActiva)return;
+ if(!document.getElementById('rutas')?.classList.contains('active')||document.body.classList.contains('sesion-bloqueada'))return alert('Abra su ruta con la sesión iniciada.');
+ if(!usuarioActual||adminAutenticado||!usuarioActual.modulos.includes('ventas'))return alert('Esta operación requiere el permiso de Ventas del vendedor.');
+ const c=(db.clientes||[]).find(x=>String(x.id)===String(clienteId));
+ if(!c||String(c.vendedorId||'')!==String(usuarioActual.id))return alert('Este cliente ya no está asignado al vendedor conectado.');
+ const dia=document.getElementById('rutasFiltroDia')?.value||'';
+ const ruta=document.getElementById('rutasFiltroNumero')?.value||'';
+ const norm=x=>String(x||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().toLocaleLowerCase('es');
+ if(norm(c.diaVisita)!==norm(dia)||(ruta&&String(c.ruta||'')!==ruta))return alert('El cliente no corresponde al día y la ruta seleccionados.');
+ if(ventaClienteActivo!==null||ventaRapidaLineas.length)return alert('Ya existe una venta en preparación. Finalice o cancele esa venta antes de iniciar otra desde Rutas.');
+ if(document.getElementById('modal')?.classList.contains('show'))return alert('Cierre primero la ventana de la operación anterior.');
+ try{if(typeof window.gmcVentaRutaValidarInicio!=='function')throw Error('Espere la conexión con Firestore.');window.gmcVentaRutaValidarInicio();}catch(error){return alert(error.message||String(error));}
+ const ventas=document.getElementById('ventas');
+ if(!ventas||!ventas.parentNode)return;
+ const marca=document.createComment('Ubicación original del formulario de Ventas');
+ ventas.parentNode.insertBefore(marca,ventas);
+ const superpuesta=document.createElement('div');
+ superpuesta.className='gmc-venta-ruta-superpuesta';
+ superpuesta.id='gmcVentaRutaSuperpuesta';
+ superpuesta.innerHTML=`<div class="gmc-venta-ruta-cabecera"><div><strong>🛒 Venta al cliente de la ruta</strong><div style="font-size:12px;margin-top:3px">${esc(c.nombreCliente||c.razonSocial||c.nombre||'Cliente')} · Ruta ${esc(c.ruta||'—')}</div></div><button type="button" class="btn btn-light" onclick="gmcCerrarVentaDesdeRuta()">← Volver a Rutas</button></div><div class="gmc-venta-ruta-contenido"></div>`;
+ document.querySelector('.app').appendChild(superpuesta);
+ const overflowAnterior=document.body.style.overflow;
+ gmcVentaRutaActiva={marca,ventas,superpuesta,overflowAnterior};
+ superpuesta.querySelector('.gmc-venta-ruta-contenido').appendChild(ventas);
+ ventas.style.display='block';
+ document.body.style.overflow='hidden';
+ prepararVentaRapida();
+ const selector=document.getElementById('ventaClienteInicio');
+ selector.value=String(c.id);
+ if(selector.value!==String(c.id)){
+   gmcCerrarVentaDesdeRuta(true);
+   return alert('El cliente no está disponible para vender. Actualice la ruta.');
+ }
+ iniciarVentaConCliente();
+}
+function gmcCerrarVentaDesdeRuta(confirmada=false){
+ const estado=gmcVentaRutaActiva;
+ if(!estado)return;
+ if(!confirmada){
+   if(window.gmcVentaRutaPendiente?.())return alert('Debe comprobar primero la venta pendiente para evitar duplicados.');
+   if(document.getElementById('modal')?.classList.contains('show'))return alert('Cierre primero el formulario de cobro o producto.');
+   if(ventaRapidaLineas.length&&!confirm('¿Salir de la venta y descartar los productos agregados?'))return;
+ }
+ estado.marca.parentNode?.insertBefore(estado.ventas,estado.marca);
+ estado.marca.remove();
+ estado.ventas.style.display='';
+ estado.superpuesta.remove();
+ document.body.style.overflow=estado.overflowAnterior;
+ gmcVentaRutaActiva=null;
+ if(!confirmada){
+   ventaRapidaLineas=[];ventaRapidaSeleccion=-1;
+   nuevaVentaRapida();
+ }
+}
+
+window.gmcVentaRutaEstaActiva=()=>!!gmcVentaRutaActiva;
 // Abrir el abono de la factura del cliente visitado, sin abandonar el módulo Rutas.
 // Mantiene los controles de acceso, saldos y transacciones de la cartera existente.
 function gmcAbonarDesdeRutas(id,clienteId){
@@ -4043,7 +4110,7 @@ function buscarGlobal(){
  openModal('Resultados de búsqueda',out.length?out.map(x=>`<div class="metric-line"><span><span class="tag">${x[0]}</span> <b>${esc(x[1])}</b><br><small class="muted">${esc(x[2])}</small></span></div>`).join(''):'<div class="empty">No se encontraron coincidencias</div>')
 }
 
-function bloquearAplicativo(){usuarioActual=null;adminAutenticado=false;actualizarSesionUI();document.querySelectorAll('.section').forEach(x=>x.classList.remove('active'));document.body.classList.add('sesion-bloqueada');if(localStorage.getItem(ADMIN_AUTH_KEY))abrirLoginUsuario();else abrirAccesoAdmin()}
+function bloquearAplicativo(){if(gmcVentaRutaActiva)gmcCerrarVentaDesdeRuta(true);usuarioActual=null;adminAutenticado=false;actualizarSesionUI();document.querySelectorAll('.section').forEach(x=>x.classList.remove('active'));document.body.classList.add('sesion-bloqueada');if(localStorage.getItem(ADMIN_AUTH_KEY))abrirLoginUsuario();else abrirAccesoAdmin()}
 
 
 // Metas y Cumplimiento: objetivo principal de unidades por usuario y ruta.
@@ -5188,6 +5255,8 @@ function gmcExigirVentaCentral(){
  if(gmcPendienteVenta())throw Error('Hay una venta pendiente de verificar. Pulse «Revisar y reintentar venta pendiente» para evitar duplicados.');
  if(usuarioActual&&!adminAutenticado&&cierreHechoHoyUsuario(usuarioActual.id))throw Error('Su caja ya fue cerrada hoy.');
 }
+window.gmcVentaRutaValidarInicio=()=>gmcExigirVentaCentral();
+window.gmcVentaRutaPendiente=()=>gmcVentaEnCurso||!!gmcPendienteVenta();
 const gmcIdVentaSeguro=()=>typeof crypto!=='undefined'&&crypto.randomUUID?crypto.randomUUID():uid()+'_'+uid();
 const gmcMonto2=x=>Math.round((Number(x)+Number.EPSILON)*100)/100;
 function gmcValidarLineasVenta(lineas){
@@ -5286,6 +5355,7 @@ async function gmcEjecutarVentaFirestore(pendiente){
    const selectorPost=document.getElementById('gmcVentaPostCierreVendedor');if(selectorPost)selectorPost.value='';gmcCambioVendedorVentaPostCierre();
    window.gmcFechaVentaManual=false;document.getElementById('rvComentario').value='';document.getElementById('rvFecha').value=today();document.getElementById('ventaPvpInicio').value='1';
   }else{tempLineas=[];}
+  if(pendiente.origen==='rapida'&&window.gmcVentaRutaEstaActiva?.())window.gmcCerrarVentaDesdeRuta(true);
   cerrarModal();renderAll();
   alert(resultado.existente?'Venta ya confirmada en Firestore. Se reconoció la operación anterior sin descontar stock otra vez. Documento '+resultado.numero:'Venta confirmada en Firestore. Documento '+resultado.numero+'. Stock descontado una sola vez.');
  }catch(error){
