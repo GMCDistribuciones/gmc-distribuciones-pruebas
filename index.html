@@ -727,6 +727,8 @@
           <div class="card kpi"><small>Cartera vencida</small><strong id="rutasTotalVencido">$0.00</strong></div>
         </div>
         <p id="rutasResumen" class="muted" style="font-size:12px" aria-live="polite"></p>
+        <div class="note" id="gmcAperturaPendienteRutas" style="display:none;margin:10px 0" aria-live="polite"></div>
+        <div class="note" id="gmcAbonoPendienteRutas" style="display:none;margin:10px 0" aria-live="polite"></div>
         <div class="table-wrap">
           <table>
             <thead><tr><th>Visitado</th><th>Ruta</th><th>Visita</th><th>Nombre</th><th>Razón social</th><th>Identificación</th><th>Día</th><th>Vendedor</th><th>Teléfono</th><th>Dirección</th><th>Cuentas pendientes</th><th>Saldo por cobrar</th><th>Detalle de facturas</th></tr></thead>
@@ -2148,7 +2150,9 @@ function renderRutas(){
     const vencido=creditos.filter(creditoVencido).reduce((sum,v)=>sum+saldoCredito(v),0);
     pendientes+=saldo;vencidos+=vencido;facturas+=creditos.length;if(saldo>0)conSaldo++;
     const vendedor=c.vendedorId?(nombresUsuarios.get(String(c.vendedorId))||c.vendedorNombre||'Usuario no registrado'):'Sin asignar';
-    const detalle=creditos.length?`<details><summary style="cursor:pointer;color:var(--azul2);font-weight:700">Ver ${creditos.length} factura(s)</summary><div class="table-wrap" style="margin-top:8px"><table><thead><tr><th>Factura</th><th>Fecha</th><th>Vencimiento</th><th>Saldo</th><th>Estado</th></tr></thead><tbody>${creditos.map(v=>`<tr><td>${esc(v.numero||'S/N')}</td><td>${esc(v.fecha||'—')}</td><td>${esc(v.fechaVencimiento||fechaVencimientoCredito(v.fecha)||'—')}</td><td>${money(saldoCredito(v))}</td><td>${creditoVencido(v)?'<span class="danger">Vencida</span>':'Pendiente'}</td></tr>`).join('')}</tbody></table></div></details>`:'—';
+    // El abono de Rutas reutiliza el mismo formulario y la misma autorización de Mis créditos.
+    // Si una venta pertenece a otro vendedor, se conserva como consulta sin permitir abonarla.
+    const detalle=creditos.length?`<details><summary style="cursor:pointer;color:var(--azul2);font-weight:700">Ver ${creditos.length} factura(s)</summary><div class="table-wrap" style="margin-top:8px"><table><thead><tr><th>Factura</th><th>Fecha</th><th>Vencimiento</th><th>Saldo</th><th>Estado</th><th>Abono</th></tr></thead><tbody>${creditos.map(v=>`<tr><td>${esc(v.numero||'S/N')}</td><td>${esc(v.fecha||'—')}</td><td>${esc(v.fechaVencimiento||fechaVencimientoCredito(v.fecha)||'—')}</td><td>${money(saldoCredito(v))}</td><td>${creditoVencido(v)?'<span class="danger">Vencida</span>':'Pendiente'}</td><td>${esAdmin||creditoPerteneceUsuario(v)?`<button type="button" class="btn btn-success" style="padding:6px 9px;font-size:12px" data-venta-id="${esc(v.id)}" data-cliente-id="${esc(c.id)}" onclick="gmcAbonarDesdeRutas(this.dataset.ventaId,this.dataset.clienteId)">Abonar</button>`:'<span class="muted">Solo consulta</span>'}</td></tr>`).join('')}</tbody></table></div></details>`:'—';
     const yaVisitado=visitaEstado.marcados.has(String(c.id))&&estadoCorrecto;
     const deshabilitado=!visitasConfirmadas||window.gmcVisitaEscribiendo?.has(today()+'|'+c.id);
     const casilla=esUsuarioRuta?`<input type="checkbox" aria-label="Marcar visitado: ${esc(c.nombreCliente||c.razonSocial||c.nombre||'cliente')}" data-cliente-id="${esc(String(c.id))}" ${yaVisitado?'checked':''} ${deshabilitado?'disabled':''} onchange="gmcMarcarVisitaRuta(this.dataset.clienteId,this.checked)" style="width:20px;height:20px;cursor:pointer">`:'—';
@@ -2164,6 +2168,33 @@ function renderRutas(){
   document.getElementById('rutasTotalPendiente').textContent=money(pendientes);
   document.getElementById('rutasTotalVencido').textContent=money(vencidos);
   document.getElementById('rutasResumen').textContent=`${diaElegido||'Todos los días'} · ${clientes.length} cliente(s) · ${facturas} factura(s) pendientes · ${rutas.length} ruta(s) disponible(s)`+(esUsuarioRuta?(' · '+(visitasConfirmadas?totalVisitados+' visitado(s), '+(clientes.length-totalVisitados)+' por visitar':'Esperando sincronización del estado de las visitas con Firestore')):'');
+}
+
+
+// Abrir el abono de la factura del cliente visitado, sin abandonar el módulo Rutas.
+// Mantiene los controles de acceso, saldos y transacciones de la cartera existente.
+function gmcAbonarDesdeRutas(id,clienteId){
+ if(!document.getElementById('rutas')?.classList.contains('active'))return alert('Abra el módulo Rutas para registrar este abono.');
+ if(document.body.classList.contains('sesion-bloqueada')||(!adminAutenticado&&!usuarioActual))return alert('Inicie sesión para registrar un abono.');
+ const cliente=(db.clientes||[]).find(c=>String(c.id)===String(clienteId));
+ if(!cliente)return alert('Este cliente ya no está disponible. Actualice la ruta.');
+ const normalizar=x=>String(x||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().toLocaleLowerCase('es');
+ const dia=document.getElementById('rutasFiltroDia')?.value||'';
+ const ruta=document.getElementById('rutasFiltroNumero')?.value||'';
+ const vendedor=document.getElementById('rutasFiltroVendedor')?.value||'';
+ if((dia&&normalizar(cliente.diaVisita)!==normalizar(dia))||
+   (ruta&&ruta!=='__sin_ruta__'&&String(cliente.ruta||'')!==ruta)||
+   (ruta==='__sin_ruta__'&&cliente.ruta))return alert('El cliente ya no corresponde a la ruta seleccionada. Actualice la consulta.');
+ if(adminAutenticado){
+  if(vendedor&&(vendedor==='__sin_asignar__'?!!cliente.vendedorId:String(cliente.vendedorId||'')!==vendedor))
+   return alert('El cliente ya no corresponde al vendedor seleccionado.');
+ }else if(String(cliente.vendedorId||'')!==String(usuarioActual.id)){
+  return alert('Solo puede registrar abonos de los clientes asignados a su usuario.');
+ }
+ const registro=registrosCarteraPendiente().find(r=>String(r.venta?.id)===String(id)&&String(r.cliente?.id)===String(clienteId));
+ if(!registro||registro.saldo<=0)return alert('La factura ya no tiene saldo pendiente. Actualice la ruta.');
+ if(!adminAutenticado&&!creditoPerteneceUsuario(registro.venta))return alert('Este crédito corresponde a otro vendedor y está disponible solo para consulta.');
+ abrirAbonoCredito(registro.venta.id);
 }
 
 function lineaVentaHtml(){
@@ -5343,7 +5374,7 @@ function gmcMostrarAbonoPendiente(){
  const aviso=pendiente
   ? 'Abono pendiente de comprobación (factura '+esc(pendiente.numero||pendiente.ventaId)+'). No registre un abono nuevo hasta confirmar el anterior.'
   : '';
- for(const id of ['gmcAbonoPendienteMisCreditos','gmcAbonoPendienteAdmin']){
+ for(const id of ['gmcAbonoPendienteMisCreditos','gmcAbonoPendienteAdmin','gmcAbonoPendienteRutas']){
   const n=document.getElementById(id);if(!n)continue;
   n.style.display=pendiente?'':'none';
   n.innerHTML=pendiente?'<strong>⚠️ '+aviso+'</strong><div class="actions" style="margin-top:9px"><button class="btn btn-warning" onclick="gmcReintentarAbonoCreditoFirebase()">Revisar y reintentar el mismo abono</button><button class="btn btn-light" onclick="gmcDescartarAbonoCreditoFirebase()">Descartar solo si no existe en Firestore</button></div>':'';
@@ -5442,7 +5473,7 @@ const gmcClaveAbonoApertura=()=> 'gmc_apertura_abono_pendiente_'+(firebaseAuthGM
 function gmcAperturaPendiente(){try{return JSON.parse(localStorage.getItem(gmcClaveAbonoApertura())||'null')}catch{return null}}
 window.gmcMostrarPendienteApertura=function gmcMostrarPendienteApertura(){
  const p=gmcAperturaPendiente();
- for(const id of ['gmcAperturaPendienteClientes','gmcAperturaPendienteMisCreditos']){
+ for(const id of ['gmcAperturaPendienteClientes','gmcAperturaPendienteMisCreditos','gmcAperturaPendienteRutas']){
   const e=document.getElementById(id);if(!e)continue;e.style.display=p?'':'none';
   e.innerHTML=p?'<b>⚠️ Abono de deuda anterior sin confirmar.</b> No vuelva a cobrar hasta verificarlo. <button class="btn btn-warning" onclick="gmcReintentarAbonoApertura()">Comprobar y reintentar el mismo abono</button> <button class="btn btn-light" onclick="gmcDescartarAbonoApertura()">Descartar solo si no existe en Firestore</button>':'';
  }
