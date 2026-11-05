@@ -360,6 +360,7 @@
           <div><label>Factura desde</label><input type="date" id="cpDesde" onchange="renderCarteraPendiente('cp')"></div>
           <div><label>Factura hasta</label><input type="date" id="cpHasta" onchange="renderCarteraPendiente('cp')"></div>
           <div><label>Usuario / vendedor</label><select id="cpVendedor" onchange="renderCarteraPendiente('cp')"><option value="">Todos los vendedores</option></select></div>
+          <div><label>Ruta</label><select id="cpRuta" onchange="renderCarteraPendiente('cp')"><option value="">Todas las rutas</option></select></div>
           <div><label>Día de atención</label><select id="cpDia" onchange="renderCarteraPendiente('cp')"><option value="">Todos los días</option><option value="Lunes">Lunes</option><option value="Martes">Martes</option><option value="Miércoles">Miércoles</option><option value="Jueves">Jueves</option><option value="Viernes">Viernes</option><option value="Sábado">Sábado</option><option value="Domingo">Domingo</option><option value="__sin_dia__">Sin día asignado</option></select></div>
           <button class="btn btn-primary" onclick="renderCarteraPendiente('cp')">Consultar</button>
         </div>
@@ -1816,9 +1817,10 @@ function registrosCarteraPendiente(){
 }
 function renderCarteraPendiente(prefijo){
   const selV=document.getElementById(prefijo+'Vendedor'),selDia=document.getElementById(prefijo+'Dia');
+  const selRuta=document.getElementById(prefijo+'Ruta');
   const desde=document.getElementById(prefijo+'Desde'),hasta=document.getElementById(prefijo+'Hasta');
   const tabla=document.getElementById(prefijo+'Tabla');
-  if(!selV||!selDia||!desde||!hasta||!tabla)return;
+  if(!selV||!selDia||!selRuta||!desde||!hasta||!tabla)return;
   const registros=registrosCarteraPendiente();
   const anterior=selV.value;
   const opciones=new Map();
@@ -1828,9 +1830,20 @@ function renderCarteraPendiente(prefijo){
   if(vendedores.some(([k])=>k===anterior))selV.value=anterior;
   const norm=x=>String(x||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().toLocaleLowerCase('es');
   const dia=selDia.value,usuario=selV.value;
+  // Rutas de la cartera del vendedor seleccionado; conservar selección si sigue disponible.
+  const rutaAnterior=selRuta.value;
+  const registrosVendedor=registros.filter(r=>!usuario||(r.vendedorId?'id:'+r.vendedorId:'nombre:'+r.vendedor)===usuario);
+  const rutas=[...new Set(registrosVendedor.map(r=>String(r.ruta||'').trim()).filter(Boolean))]
+    .sort((a,b)=>a.localeCompare(b,'es',{numeric:true,sensitivity:'base'}));
+  const sinRuta=registrosVendedor.some(r=>!String(r.ruta||'').trim());
+  selRuta.innerHTML='<option value="">Todas las rutas</option>'+rutas.map(r=>`<option value="${esc(r)}">Ruta ${esc(r)}</option>`).join('')+
+    (sinRuta?'<option value="__sin_ruta__">Sin ruta asignada</option>':'');
+  if(rutas.includes(rutaAnterior)||(rutaAnterior==='__sin_ruta__'&&sinRuta))selRuta.value=rutaAnterior;
+  const ruta=selRuta.value;
   const lista=registros.filter(r=>(!desde.value||r.venta.fecha>=desde.value)&&(!hasta.value||r.venta.fecha<=hasta.value)&&
     (!usuario||(r.vendedorId?'id:'+r.vendedorId:'nombre:'+r.vendedor)===usuario)&&
-    (!dia||(dia==='__sin_dia__'?!r.dia:norm(r.dia)===norm(dia))))
+    (!dia||(dia==='__sin_dia__'?!r.dia:norm(r.dia)===norm(dia)))&&
+    (!ruta||(ruta==='__sin_ruta__'?!String(r.ruta||'').trim():String(r.ruta||'').trim()===ruta)))
     .sort((a,b)=>String(a.venta.fecha||'').localeCompare(String(b.venta.fecha||''))||String(a.venta.numero||'').localeCompare(String(b.venta.numero||'')));
   const saldo=lista.reduce((s,r)=>s+r.saldo,0),vencido=lista.filter(r=>creditoVencido(r.venta)).reduce((s,r)=>s+r.saldo,0);
   const clientes=new Set(lista.map(r=>r.cliente?'id:'+r.cliente.id:r.venta.terceroId?'id:'+r.venta.terceroId:'nombre:'+norm(r.venta.tercero)));
