@@ -907,6 +907,7 @@
         <p class="note">Consulte sus ventas a crédito y las deudas anteriores de los clientes asignados. Registre los cobros sin convertir una deuda anterior en venta.</p>
         <div class="toolbar">
           <div style="flex:1;max-width:420px"><label>Buscar cliente o número de venta</label><input id="misCreditosBuscar" type="search" placeholder="Cliente o número de venta" oninput="renderMisCreditos()"></div>
+          <div style="flex:1;max-width:210px"><label>Ruta a visitar</label><select id="misCreditosRuta" onchange="renderMisCreditos()"><option value="">Todas las rutas</option></select></div>
         </div>
         <div class="note" id="gmcAperturaPendienteMisCreditos" style="display:none" aria-live="polite"></div>
         <div class="note" id="gmcAbonoPendienteMisCreditos" style="display:none;margin:10px 0" aria-live="polite"></div>
@@ -2935,10 +2936,24 @@ function renderMisCreditos(){
     resumen.textContent='';return;
   }
   const pendientes=[...db.ventas,...gmcCarteraAperturaVentas()].filter(v=>creditoPerteneceUsuario(v)&&v.formaPago==='credito'&&!esDevuelta(v.id)&&saldoCredito(v)>0);
-  const saldoTotal=pendientes.reduce((n,v)=>n+saldoCredito(v),0);
-  resumen.textContent=pendientes.length+' cuenta(s) a crédito pendientes (incluye deudas anteriores) · Saldo total: '+money(saldoTotal);
+  // Ruta tomada de la ficha actual del cliente; reutiliza la resolución de clientes de Cartera pendiente.
+  const rutasPorCredito=new Map(registrosCarteraPendiente().map(r=>[String(r.venta.id),String(r.ruta||'').trim()]));
+  const selectorRuta=document.getElementById('misCreditosRuta');
+  if(selectorRuta){
+    const rutaAnterior=selectorRuta.value;
+    const rutas=[...new Set([
+      ...(db.clientes||[]).filter(c=>String(c.vendedorId||'')===String(usuarioActual.id)).map(c=>String(c.ruta||'').trim()),
+      ...pendientes.map(v=>rutasPorCredito.get(String(v.id))||'')
+    ].filter(Boolean))].sort((a,b)=>a.localeCompare(b,'es',{numeric:true}));
+    selectorRuta.innerHTML='<option value="">Todas las rutas</option>'+rutas.map(r=>`<option value="${esc(r)}">Ruta ${esc(r)}</option>`).join('');
+    if(rutas.includes(rutaAnterior))selectorRuta.value=rutaAnterior;
+  }
+  const ruta=selectorRuta?.value||'';
+  const pendientesRuta=ruta?pendientes.filter(v=>rutasPorCredito.get(String(v.id))===ruta):pendientes;
+  const saldoTotal=pendientesRuta.reduce((n,v)=>n+saldoCredito(v),0);
+  resumen.textContent=pendientesRuta.length+' cuenta(s) a crédito pendientes (incluye deudas anteriores)'+(ruta?' · Ruta '+ruta:'')+' · Saldo total: '+money(saldoTotal);
   const q=(document.getElementById('misCreditosBuscar')?.value||'').trim().toLocaleLowerCase('es');
-  const visibles=pendientes.filter(v=>!q||(String(v.tercero||'')+' '+String(v.numero||'')).toLocaleLowerCase('es').includes(q));
+  const visibles=pendientesRuta.filter(v=>!q||(String(v.tercero||'')+' '+String(v.numero||'')).toLocaleLowerCase('es').includes(q));
   cuerpo.innerHTML=visibles.slice().sort((a,b)=>String(b.fecha||'').localeCompare(String(a.fecha||''))).map(v=>`<tr><td>${esc(v.fecha)}</td><td>${esc(v.numero||'S/N')}</td><td>${esc(v.tercero)}</td><td>${money(v.total)}</td><td>${money(v.abono||0)}</td><td><strong>${money(saldoCredito(v))}</strong></td><td>${esc(v.fechaVencimiento||fechaVencimientoCredito(v.fecha))}${creditoVencido(v)?'<br><strong class="danger">VENCIDA</strong>':''}</td><td><div class="actions" style="flex-wrap:nowrap"><button class="btn btn-light" onclick="verDoc('ventas','${esc(v.id)}')">Ver</button><button class="btn btn-success" onclick="abrirAbonoCredito('${esc(v.id)}')">Abonar</button></div></td></tr>`).join('')||'<tr><td colspan="8" class="empty">No hay créditos pendientes con ese criterio.</td></tr>';
 }
 function abrirAbonoCredito(id){
