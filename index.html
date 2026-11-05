@@ -363,6 +363,7 @@
           <div><label>Ruta</label><select id="cpRuta" onchange="renderCarteraPendiente('cp')"><option value="">Todas las rutas</option></select></div>
           <div><label>Día de atención</label><select id="cpDia" onchange="renderCarteraPendiente('cp')"><option value="">Todos los días</option><option value="Lunes">Lunes</option><option value="Martes">Martes</option><option value="Miércoles">Miércoles</option><option value="Jueves">Jueves</option><option value="Viernes">Viernes</option><option value="Sábado">Sábado</option><option value="Domingo">Domingo</option><option value="__sin_dia__">Sin día asignado</option></select></div>
           <button class="btn btn-primary" onclick="renderCarteraPendiente('cp')">Consultar</button>
+          <button type="button" class="btn btn-light" onclick="imprimirCarteraPendienteFiltrada()">🖨 Imprimir cartera filtrada</button>
         </div>
         <div class="grid g4" style="margin:12px 0">
           <div class="card kpi"><small>Facturas pendientes</small><strong id="cpFacturas">0</strong></div>
@@ -1856,6 +1857,60 @@ function renderCarteraPendiente(prefijo){
     const v=r.venta,c=r.cliente;
     return `<tr><td>${esc(v.numero||'S/N')}</td><td>${esc(v.fecha||'—')}</td><td>${esc(c?.razonSocial||c?.nombreCliente||c?.nombre||v.tercero||'—')}</td><td>${esc(c?.identificacion||'—')}</td><td>${esc(r.vendedor)}</td><td>${esc(r.dia||'Sin asignar')}</td><td>${esc(r.ruta||'—')}</td><td>${esc(v.fechaVencimiento||fechaVencimientoCredito(v.fecha)||'—')}</td><td>${money(v.total)}</td><td>${money(resumenAbonosVentaCredito(v).total)}</td><td><strong class="danger">${money(r.saldo)}</strong></td><td>${creditoVencido(v)?'<span class="danger">Vencida</span>':'Pendiente'}</td><td><button class="btn btn-success" onclick="abrirAbonoCredito('${esc(v.id)}')">Abonar</button></td></tr>`;
   }).join('')||'<tr><td colspan="13" class="empty">Sin facturas pendientes para los filtros seleccionados.</td></tr>';
+}
+
+// Impresión administrativa: reproduce exclusivamente la cartera que muestran los filtros actuales.
+// Lee la tabla ya renderizada; no escribe, modifica ni vuelve a calcular créditos en Firestore.
+function imprimirCarteraPendienteFiltrada(){
+ if(!adminAutenticado||document.body.classList.contains('sesion-bloqueada'))return alert('Acceso exclusivo del administrador para imprimir cartera.');
+ // Aplicar los filtros actuales antes de capturar la totalidad de las filas (sin paginación).
+ renderCarteraPendiente('cp');
+ const tabla=document.getElementById('cpTabla');
+ if(!tabla)return alert('No está disponible la consulta de cartera pendiente.');
+ const columnas=['Factura','Fecha','Cliente','Identificación','Vendedor responsable','Día de atención','Ruta','Vencimiento','Total','Abonado','Saldo pendiente','Estado'];
+ const filas=[...tabla.querySelectorAll('tr')]
+  .filter(tr=>tr.cells.length===13&&!tr.querySelector('td[colspan]'))
+  .map(tr=>[...tr.cells].slice(0,12).map(td=>esc(td.textContent.trim().replace(/\s+/g,' '))));
+ const valor=id=>document.getElementById(id)?.value||'';
+ const opcion=id=>{
+  const select=document.getElementById(id);
+  return select?.selectedOptions?.[0]?.textContent?.trim()||'Todas';
+ };
+ const resumen=[
+  ['Factura desde',valor('cpDesde')||'Sin límite'],
+  ['Factura hasta',valor('cpHasta')||'Sin límite'],
+  ['Vendedor',opcion('cpVendedor')],
+  ['Ruta',opcion('cpRuta')],
+  ['Día de atención',opcion('cpDia')]
+ ].map(([k,v])=>`<span><b>${esc(k)}:</b> ${esc(v)}</span>`).join('');
+ const indicadores=[
+  ['Facturas pendientes',document.getElementById('cpFacturas')?.textContent||'0'],
+  ['Clientes con cartera',document.getElementById('cpClientes')?.textContent||'0'],
+  ['Saldo pendiente',document.getElementById('cpSaldo')?.textContent||money(0)],
+  ['Saldo vencido',document.getElementById('cpVencido')?.textContent||money(0)]
+ ].map(([k,v])=>`<div><small>${esc(k)}</small><strong>${esc(v)}</strong></div>`).join('');
+ const cabecera=columnas.map(t=>`<th>${esc(t)}</th>`).join('');
+ const cuerpo=filas.length?filas.map(f=>`<tr>${f.map(c=>`<td>${c}</td>`).join('')}</tr>`).join(''):
+  `<tr><td colspan="12" style="text-align:center">Sin facturas pendientes para los filtros seleccionados.</td></tr>`;
+ const negocio=db.config||{};
+ imprimirDocumentoNativo(`<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><title>GMC - Cartera pendiente filtrada</title><style>
+ *{box-sizing:border-box}body{font-family:Arial,Helvetica,sans-serif;font-size:10px;color:#172033;margin:14px}
+ header{border-bottom:2px solid #0b3d73;padding-bottom:8px;margin-bottom:9px}h1{font-size:17px;color:#0b3d73;margin:0 0 3px}h2{font-size:14px;margin:0 0 8px}
+ .filtros{display:flex;flex-wrap:wrap;gap:4px 15px;margin:8px 0 10px;line-height:1.5}
+ .resumen{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px;margin:10px 0 12px}
+ .resumen>div{padding:7px;border:1px solid #d6dde8;background:#f5f7fb;border-radius:4px}
+ .resumen small{display:block;font-size:9px;color:#475467}.resumen strong{display:block;font-size:13px;margin-top:4px}
+ table{border-collapse:collapse;width:100%;table-layout:fixed;font-size:8px}thead{display:table-header-group}
+ th,td{border:1px solid #d6dde8;padding:4px 3px;text-align:left;vertical-align:top;overflow-wrap:anywhere;word-break:break-word}
+ th{background:#eaf3ff;font-weight:700}tr{break-inside:avoid;page-break-inside:avoid}
+ th:nth-child(3),td:nth-child(3){width:12%}th:nth-child(5),td:nth-child(5){width:11%}
+ th:nth-child(9),td:nth-child(9),th:nth-child(10),td:nth-child(10),th:nth-child(11),td:nth-child(11){white-space:nowrap;text-align:right}
+ footer{margin-top:10px;color:#667085;font-size:9px}
+ @media print{@page{size:A4 landscape;margin:10mm}body{margin:0}}
+ </style></head><body><header><h1>${esc(negocio.nombre||negocio.razon||'Control Negocio')}</h1><small>GMC DISTRIBUCIONES · Informe interno · Impreso: ${esc(fechaSistemaCierre())}</small></header>
+ <h2>Cartera pendiente — resultado de los filtros aplicados</h2><div class="filtros">${resumen}</div>
+ <div class="resumen">${indicadores}</div><table><thead><tr>${cabecera}</tr></thead><tbody>${cuerpo}</tbody></table>
+ <footer>Se incluyen todos los registros visibles en la consulta filtrada; no se registran cobros ni cambios en el sistema.</footer></body></html>`);
 }
 
 // Analítica de cartera pendiente: mismos filtros generales de Análisis, sin modificar los créditos.
