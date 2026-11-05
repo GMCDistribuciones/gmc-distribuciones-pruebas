@@ -2088,15 +2088,16 @@ function renderRutas(){
   const rutaAnterior=numeroSel.value;
   const rutas=[...new Set(clientesBase.map(c=>String(c.ruta||'')).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'es',{numeric:true}));
   if(esUsuarioRuta){
-    // Solo rutas del día y del vendedor autenticado; no puede elegir otras.
+    // El vendedor solo elige entre sus rutas del día actual; el día sigue bloqueado.
     if(rutas.length===1){
-      numeroSel.innerHTML=`<option value="${esc(rutas[0])}">${esc(rutas[0])}</option>`;
+      numeroSel.innerHTML=`<option value="${esc(rutas[0])}">Ruta ${esc(rutas[0])}</option>`;
     }else if(rutas.length>1){
-      numeroSel.innerHTML=`<option value="">Rutas de hoy: ${esc(rutas.join(', '))}</option>`;
+      numeroSel.innerHTML='<option value="">Todas las rutas de hoy</option>'+rutas.map(r=>`<option value="${esc(r)}">Ruta ${esc(r)}</option>`).join('');
+      if(rutas.includes(rutaAnterior))numeroSel.value=rutaAnterior;
     }else{
       numeroSel.innerHTML='<option value="">Sin ruta asignada hoy</option>';
     }
-    numeroSel.disabled=true;
+    numeroSel.disabled=rutas.length===0;
   }else{
     numeroSel.innerHTML='<option value="">Todas las rutas</option>'+rutas.map(r=>`<option value="${esc(r)}">${esc(r)}</option>`).join('')+'<option value="__sin_ruta__">Sin ruta</option>';
     if([...numeroSel.options].some(o=>o.value===rutaAnterior))numeroSel.value=rutaAnterior;
