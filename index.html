@@ -1946,7 +1946,8 @@ function renderAnaliticaCarteraPendiente(){
 // Los registros antiguos sin orden conservan una posición alfabética al final.
 const gmcDiasSemanaOrden=['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 function gmcClaveGrupoOrdenVisitas(c){
- return String(c.diaVisita||'').trim().normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase()+'|'+String(c.ruta||'').trim();
+ // La posición de cada visita pertenece a un vendedor, día y ruta específicos.
+ return String(c.vendedorId||'__sin_asignar__')+'|'+String(c.diaVisita||'').trim().normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase()+'|'+String(c.ruta||'').trim();
 }
 function gmcCompararOrdenVisitas(a,b){
  const ruta=String(a.ruta||'').localeCompare(String(b.ruta||''),'es',{numeric:true});
@@ -1954,6 +1955,9 @@ function gmcCompararOrdenVisitas(a,b){
  const diaA=gmcDiasSemanaOrden.findIndex(d=>d===a.diaVisita);
  const diaB=gmcDiasSemanaOrden.findIndex(d=>d===b.diaVisita);
  if(diaA!==diaB)return (diaA<0?7:diaA)-(diaB<0?7:diaB);
+ // Mantener independientes las secuencias administrativas de cada vendedor.
+ const vendedor=String(a.vendedorId||'').localeCompare(String(b.vendedorId||''),'es');
+ if(vendedor)return vendedor;
  const orden=c=>Number.isSafeInteger(Number(c.ordenVisita))&&Number(c.ordenVisita)>0?Number(c.ordenVisita):Number.MAX_SAFE_INTEGER;
  return orden(a)-orden(b)||String(a.nombreCliente||a.razonSocial||a.nombre||'').localeCompare(String(b.nombreCliente||b.razonSocial||b.nombre||''),'es')||String(a.id).localeCompare(String(b.id));
 }
