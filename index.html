@@ -5694,6 +5694,18 @@ function gmcSuscribirCierresFirebase(uidSesion){
   gmcAvisoCierres('No se pudo leer cierres de Firestore: '+mensajeFirebaseGMC(error));renderAll();gmcRenderVentaPostCierre();
  });
  gmcMostrarCierrePendiente();
+ // Si un cierre progresivo quedo a medias en otro telefono, recuperar su ID original.
+ if(firebaseRolGMC==='vendedor'){
+  getDocsFromServer(query(collection(firestoreGMC,'procesosCierre'),where('usuarioId','==',uidSesion)))
+   .then(snap=>{
+    if(firebaseAuthGMC.currentUser?.uid!==uidSesion||gmcPendienteCierre())return;
+    const pendiente=snap.docs.find(d=>d.data().estado==='procesando');
+    if(!pendiente)return;
+    const d=pendiente.data(),p={operadorId:uidSesion,fecha:d.fecha,usuario:d.cierre.usuario,cierre:d.cierre};
+    localStorage.setItem(gmcClaveCierrePendiente(),JSON.stringify(p));
+    gmcMostrarCierrePendiente();
+  }).catch(error=>console.warn('No fue posible consultar cierres progresivos pendientes',error));
+ }
 }
 // ETAPA 8: gastos operativos centrales, append-only e idempotentes.
 // Los gastos históricos exclusivamente locales se preservan en otro arreglo, sin mezclarlos
@@ -5848,6 +5860,118 @@ function gmcResumenParaCerrar(fecha,usuario,usuarioId,tipo){
  if(tipo==='general')copia.numUsuarios=r.numUsuarios;
  return copia;
 }
+// CIERRE PERSONAL PROGRESIVO GMC: cada asignacion se devuelve una sola vez.
+// Conserva el cierre original de hasta 8 asignaciones y su ID historico.
+const gmcRutaProcesoCierre=(id)=>doc(firestoreGMC,'procesosCierre',id);
+function gmcResumenStockDevueltoEtapas(retornos){
+ return Object.entries(retornos||{}).filter(([,cantidad])=>Number(cantidad)>0).map(([productoId,cantidad])=>({
+  productoId,nombre:(db.productos||[]).find(p=>p.id===productoId)?.nombre||productoId,
+  cantidad:gmcRedondear6(Number(cantidad))
+ }));
+}
+async function gmcCierreProgresivoFirebase(pendiente){
+ const auth=firebaseAuthGMC.currentUser,cierre=pendiente.cierre,id=cierre.id;
+ if(!auth||pendiente.operadorId!==auth.uid||cierre.usuarioId!==auth.uid||cierre.tipo!=='personal')
+  throw Error('El cierre progresivo exige la sesion original del vendedor y su cierre personal.');
+ const refProceso=gmcRutaProcesoCierre(id),refCierre=doc(firestoreGMC,'cierresCaja',id);
+ let snap=await getDocFromServer(refProceso);
+ let confirmadoEnEstaEjecucion=false;
+ if(!snap.exists()){
+  if(pendiente.fecha!==today())throw Error('El cierre pendiente corresponde a otra fecha y no tiene un proceso iniciado en Firestore. Requiere revision administrativa; no se altero el inventario.');
+  const lista=await getDocsFromServer(query(collection(firestoreGMC,'stockUsuarios'),where('usuarioId','==',auth.uid)));
+  const abiertas=lista.docs.filter(d=>d.data().estado==='abierta');
+  if(abiertas.length<=8)throw Error('El numero de asignaciones cambio. Compruebe el cierre pendiente y consulte al administrador antes de reintentarlo.');
+  if(abiertas.length>300)throw Error('Hay mas de 300 documentos abiertos. Se requiere un procedimiento especial antes de realizar devoluciones.');
+  const ids=abiertas.map(d=>d.id).sort();
+  // Confirmar que todos los documentos del servidor esten disponibles y sin IDs repetidos.
+  if(ids.length!==new Set(ids).size||ids.some(id=>!id))throw Error('La relacion de asignaciones presenta IDs invalidos.');
+  await runTransaction(firestoreGMC,async tx=>{
+   const existente=await tx.get(refProceso);
+   const final=await tx.get(refCierre);
+   const general=await tx.get(doc(firestoreGMC,'cierresCaja','general_'+cierre.fecha));
+   if(existente.exists())return;
+   if(final.exists()||general.exists())throw Error('Existe un cierre confirmado. No se creo otro proceso.');
+   tx.set(refProceso,{
+    id,fecha:cierre.fecha,usuarioId:auth.uid,operadorId:auth.uid,tipo:'personal',
+    estado:'procesando',creadoServidor:serverTimestamp(),
+    asignacionesIds:ids,procesados:[],devoluciones:[],retornos:{},cierre
+   });
+  });
+  snap=await getDocFromServer(refProceso);
+ }
+ if(!snap.exists())throw Error('No se pudo verificar el proceso de cierre en Firestore.');
+ const procesoInicial=snap.data();
+ if(procesoInicial.id!==id||procesoInicial.usuarioId!==auth.uid||procesoInicial.operadorId!==auth.uid||procesoInicial.fecha!==cierre.fecha)
+  throw Error('Existe un proceso de cierre con datos de otro usuario o fecha. No se escribio inventario.');
+ if(procesoInicial.estado==='cerrado'){
+  const confirmado=await getDocFromServer(refCierre);
+  if(!confirmado.exists())throw Error('El proceso aparece cerrado pero falta el documento final: requiere auditoria.');
+  return {existente:true,cierre:{...confirmado.data(),id}};
+ }
+ if(procesoInicial.estado!=='procesando')throw Error('Estado de cierre no reconocido. Se requiere revision.');
+ // En cada reintento se recupera el avance del SERVIDOR, nunca de una lista local.
+ for(let intento=0;intento<procesoInicial.asignacionesIds.length+1;intento++){
+  const avance=await getDocFromServer(refProceso);
+  if(!avance.exists())throw Error('No se encuentra el proceso de cierre.');
+  const p=avance.data();
+  if(p.estado==='cerrado'){
+   const final=await getDocFromServer(refCierre);
+   if(!final.exists())throw Error('El proceso figura cerrado pero su cierre no esta disponible.');
+   return {existente:!confirmadoEnEstaEjecucion,cierre:{...final.data(),id}};
+  }
+  if(p.estado!=='procesando'||!Array.isArray(p.asignacionesIds)||!Array.isArray(p.procesados))throw Error('Proceso de cierre inconsistente.');
+  const proximo=p.asignacionesIds.find(aid=>!p.procesados.includes(aid));
+  if(!proximo)throw Error('Todas las asignaciones aparecen procesadas pero falta el cierre definitivo. No repetir las devoluciones.');
+  const ultimo=p.procesados.length+1===p.asignacionesIds.length;
+  await runTransaction(firestoreGMC,async tx=>{
+   const sp=await tx.get(refProceso),sc=await tx.get(refCierre);
+   if(sc.exists())return;
+   if(!sp.exists())throw Error('Proceso de cierre desaparecido.');
+   const etapa=sp.data();
+   if(etapa.estado!=='procesando')throw Error('El cierre ya fue procesado por otra sesion. Vuelva a comprobarlo.');
+   const aid=etapa.asignacionesIds.find(x=>!etapa.procesados.includes(x));
+   if(!aid)throw Error('No hay asignaciones disponibles para procesar.');
+   const ra=doc(firestoreGMC,'stockUsuarios',aid),sa=await tx.get(ra);
+   if(!sa.exists())throw Error('Asignacion '+aid+' no encontrada en el servidor.');
+   const a=sa.data();
+   if(a.estado!=='abierta'||a.usuarioId!==auth.uid)throw Error('La asignacion '+aid+' fue modificada; no se duplico ninguna devolucion.');
+   const cantidad=gmcRedondear6(Number(a.restante));
+   if(!Number.isFinite(cantidad)||cantidad<0||cantidad>Number(a.cantidad)+0.000001)throw Error('Cantidad inconsistente en asignacion '+aid);
+   const rp=doc(firestoreGMC,'productos',a.productoId);
+   const prod=cantidad>0?await tx.get(rp):null;
+   if(cantidad>0){
+    if(!prod.exists())throw Error('Producto de la asignacion '+aid+' no encontrado.');
+    const actual=prod.data(),total=Number(actual.unidadesAsignadas||0);
+    if(!Number.isFinite(Number(actual.stock))||!Number.isFinite(total)||total+0.000001<cantidad)throw Error('No cuadra el inventario asignado de '+(actual.nombre||a.productoId));
+   }
+   const nuevosIds=[...etapa.procesados,aid];
+   const nuevasDevoluciones=[...etapa.devoluciones,{id:aid,productoId:a.productoId,cantidad}];
+   const retornos={...etapa.retornos};
+   if(cantidad>0)retornos[a.productoId]=gmcRedondear6(Number(retornos[a.productoId]||0)+cantidad);
+   const finalEtapa=nuevosIds.length===etapa.asignacionesIds.length;
+   // Toda ultima devolucion y el comprobante definitivo se escriben en el MISMO commit.
+   tx.update(refProceso,{procesados:nuevosIds,devoluciones:nuevasDevoluciones,retornos,
+    ...(finalEtapa?{estado:'cerrado',cerradoEn:serverTimestamp()}:{})});
+   tx.update(ra,{restante:0,devuelto:cantidad,estado:'cerrada',fechaCierre:etapa.fecha,ultimoCierreId:id});
+   if(cantidad>0){
+    const d=prod.data();
+    tx.update(rp,{stock:gmcRedondear6(Number(d.stock)+cantidad),
+     unidadesAsignadas:gmcRedondear6(Number(d.unidadesAsignadas||0)-cantidad),
+     ultimoCierreId:id,ultimoCierreAsignacionId:aid});
+   }
+   if(finalEtapa){
+    const definitivo={...etapa.cierre,operadorId:auth.uid,etapaFirebase:'etapa7',
+     devoluciones:nuevasDevoluciones,stockDevuelto:gmcResumenStockDevueltoEtapas(retornos),retornos};
+    tx.set(refCierre,definitivo);
+   }
+  });
+  if(ultimo)confirmadoEnEstaEjecucion=true;
+ }
+ const confirmado=await getDocFromServer(refCierre);
+ if(!confirmado.exists())throw Error('La operacion aun no muestra un cierre final confirmado. Reintente el MISMO cierre.');
+ return {existente:false,cierre:{...confirmado.data(),id}};
+}
+
 async function gmcEjecutarCierreFirestore(pendiente){
  const auth=firebaseAuthGMC.currentUser;
  if(!auth||pendiente.operadorId!==auth.uid)throw Error('Este cierre pertenece a otra sesión Firebase.');
@@ -5857,7 +5981,12 @@ async function gmcEjecutarCierreFirestore(pendiente){
  gmcCierreEnCurso=true;
  try{
   const cierre=pendiente.cierre,refCierre=doc(firestoreGMC,'cierresCaja',cierre.id);
-  const resultado=await runTransaction(firestoreGMC,async tx=>{
+  const procesoGuardado=cierre.tipo==='personal'?await getDocFromServer(gmcRutaProcesoCierre(cierre.id)):null;
+  const usaEtapas=cierre.tipo==='personal'&&(procesoGuardado?.exists() ||
+   (db.stockUsuarios||[]).filter(a=>a.estado==='abierta'&&a.usuarioId===cierre.usuarioId).length>8);
+  const resultado=usaEtapas
+   ? await gmcCierreProgresivoFirebase(pendiente)
+   : await runTransaction(firestoreGMC,async tx=>{
    // Un ID estable por usuario y fecha permite reconocer cualquier reintento.
    const previo=await tx.get(refCierre);
    if(previo.exists()){
@@ -5874,7 +6003,7 @@ async function gmcEjecutarCierreFirestore(pendiente){
    }
    // Cierre personal/individual: solo documentos del usuario con asignación abierta.
    const stock=cierre.tipo==='general'?[]:(db.stockUsuarios||[]).filter(a=>a.estado==='abierta'&&a.usuarioId===cierre.usuarioId);
-   if(stock.length>8)throw Error('Este vendedor tiene más de 8 asignaciones abiertas. No se cerró la caja: solicite al administrador consolidar las asignaciones antes de continuar.');
+   if(stock.length>8)throw Error('Para más de 8 asignaciones, el vendedor debe confirmar su cierre personal con el procedimiento progresivo desde su sesión; no se alteró el inventario.');
    const asignaciones=[];
    for(const a of stock)asignaciones.push({id:a.id,ref:doc(firestoreGMC,'stockUsuarios',a.id),snap:await tx.get(doc(firestoreGMC,'stockUsuarios',a.id))});
    const productoIds=[...new Set(asignaciones.filter(a=>a.snap.exists()&&Number(a.snap.data().restante)>0).map(a=>a.snap.data().productoId))];
@@ -5941,6 +6070,14 @@ window.gmcGenerarMiCierreFirebase=async()=>{
  try{
   gmcExigirCierreFirebase();
   if(firebaseRolGMC!=='vendedor'||!usuarioActual||!usuarioActual.modulos.includes('ventas'))throw Error('Ingrese con su usuario vendedor autorizado.');
+  const procesos=await getDocsFromServer(query(collection(firestoreGMC,'procesosCierre'),where('usuarioId','==',firebaseAuthGMC.currentUser.uid)));
+  const remotoPendiente=procesos.docs.find(d=>d.data().estado==='procesando');
+  if(remotoPendiente){
+   const anterior=remotoPendiente.data();
+   localStorage.setItem(gmcClaveCierrePendiente(),JSON.stringify({operadorId:firebaseAuthGMC.currentUser.uid,fecha:anterior.fecha,usuario:anterior.cierre.usuario,cierre:anterior.cierre}));
+   gmcMostrarCierrePendiente();
+   throw Error('Ya existe un cierre progresivo pendiente de '+anterior.fecha+'. Debe completar ese mismo cierre antes de crear otro.');
+  }
   const campo=document.getElementById('miCierreEfectivo').value.trim();
   const contado=campo===''?null:Number(campo);
   if(contado!==null&&(!Number.isFinite(contado)||contado<0||gmcMonto2(contado)!==contado))throw Error('Ingrese un efectivo contado válido con dos decimales.');
@@ -5964,6 +6101,9 @@ window.gmcGenerarCierreFirebase=async()=>{
   const dato=document.getElementById('cEfectivo').value.trim(),efectivo=Number(dato);
   if(dato===''||!Number.isFinite(efectivo)||efectivo<0||gmcMonto2(efectivo)!==efectivo)throw Error('Ingrese el efectivo recibido con máximo dos decimales. Si es cero, escriba 0.');
   if(general){
+   const procesos=await getDocsFromServer(collection(firestoreGMC,'procesosCierre'));
+   const inconclusos=procesos.docs.filter(d=>d.data().estado==='procesando');
+   if(inconclusos.length)throw Error('Hay cierres progresivos de vendedores pendientes ('+inconclusos.length+'). Confírmelos antes del cierre general.');
    const abiertos=(db.stockUsuarios||[]).filter(a=>a.estado==='abierta');
    if(abiertos.length)throw Error('Antes del cierre general deben cerrarse las cajas personales con asignaciones abiertas ('+abiertos.length+' pendientes). No se alteró el inventario.');
   }
@@ -6007,7 +6147,7 @@ window.gmcDiagnosticarCierreFirebase=async()=>{
  comprobar('Operador coincide con sesión',pendiente.operadorId===auth.uid);
  comprobar('Fecha del cierre en el día de hoy',pendiente.fecha===today());
  const locales=(db.stockUsuarios||[]).filter(a=>a.usuarioId===cierre.usuarioId&&a.estado==='abierta');
- comprobar('Máximo ocho asignaciones abiertas',locales.length<=8,locales.length);
+ comprobar('Asignaciones abiertas detectadas (cierre progresivo si supera 8)',true,locales.length);
  const totales=new Map();
  for(const a of locales){
   const remoto=await leer('stockUsuarios/'+a.id,doc(firestoreGMC,'stockUsuarios',a.id));
@@ -6065,6 +6205,8 @@ window.gmcDescartarCierreFirebase=async()=>{
  try{
   const s=await getDocFromServer(doc(firestoreGMC,'cierresCaja',p.cierre.id));
   if(s.exists())return alert('Este cierre ya existe en Firestore. No lo descarte. Utilice «Comprobar y reintentar».');
+  const proceso=await getDocFromServer(gmcRutaProcesoCierre(p.cierre.id));
+  if(proceso.exists())return alert('Este cierre tiene devoluciones progresivas reservadas o confirmadas en Firestore. NO puede descartarlo. Utilice «Comprobar y reintentar» para terminar el mismo cierre.');
   if(!confirm('Firestore confirma que este cierre NO está registrado. ¿Descartar únicamente este intento pendiente?'))return;
   localStorage.removeItem(gmcClaveCierrePendiente());gmcMostrarCierrePendiente();
   alert('Intento descartado; no se ha modificado inventario ni caja en Firestore.');
