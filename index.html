@@ -2070,12 +2070,18 @@ function renderRutas(){
   window.gmcSincronizarVisitasRuta?.();
   const diaSistema=dias[new Date(today()+'T12:00:00').getDay()];
   if(esUsuarioRuta){
-    // Solo vendedores: día actual del sistema fijado, incluso si cambia la fecha.
-    diaSel.value=diaSistema;
-    diaSel.disabled=true;
+    // El vendedor puede visitar hoy rutas planificadas para otro día sin modificar las fichas.
+    // Al cambiar de usuario, comenzar por el día actual; luego respetar su elección.
+    if(diaSel.dataset.rutasVendedorId!==String(usuarioActual.id)||!dias.includes(diaSel.value)){
+      diaSel.value=diaSistema;
+      diaSel.dataset.rutasVendedorId=String(usuarioActual.id);
+    }
+    diaSel.disabled=false;
+    diaSel.options[0].disabled=true;
   }else{
     // Administrador: conservar la selección manual existente.
     diaSel.disabled=false;
+    diaSel.options[0].disabled=false;
     if(!diaSel.dataset.inicializado){diaSel.value=diaSistema;diaSel.dataset.inicializado='1'}
   }
   const norm=x=>String(x||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().toLocaleLowerCase('es');
@@ -2100,14 +2106,14 @@ function renderRutas(){
   const rutaAnterior=numeroSel.value;
   const rutas=[...new Set(clientesBase.map(c=>String(c.ruta||'')).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'es',{numeric:true}));
   if(esUsuarioRuta){
-    // El vendedor solo elige entre sus rutas del día actual; el día sigue bloqueado.
+    // El vendedor elige entre sus propias rutas correspondientes al día consultado.
     if(rutas.length===1){
       numeroSel.innerHTML=`<option value="${esc(rutas[0])}">Ruta ${esc(rutas[0])}</option>`;
     }else if(rutas.length>1){
-      numeroSel.innerHTML='<option value="">Todas las rutas de hoy</option>'+rutas.map(r=>`<option value="${esc(r)}">Ruta ${esc(r)}</option>`).join('');
+      numeroSel.innerHTML='<option value="">Todas las rutas del día</option>'+rutas.map(r=>`<option value="${esc(r)}">Ruta ${esc(r)}</option>`).join('');
       if(rutas.includes(rutaAnterior))numeroSel.value=rutaAnterior;
     }else{
-      numeroSel.innerHTML='<option value="">Sin ruta asignada hoy</option>';
+      numeroSel.innerHTML='<option value="">Sin rutas para el día elegido</option>';
     }
     numeroSel.disabled=rutas.length===0;
   }else{
@@ -4749,9 +4755,13 @@ window.gmcMarcarVisitaRuta=async(clienteId,visitado)=>{
     !gmcVisitaSuscripcion.startsWith(auth.uid+'|')||
     !gmcVisitasDiaEstado.listo)return alert('Espere confirmación de Firestore y compruebe su conexión.');
  const c=(db.clientes||[]).find(x=>String(x.id)===String(clienteId));
- const dias=['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
- const diaActual=dias[new Date(fecha+'T12:00:00').getDay()];
- if(!c||String(c.vendedorId)!==auth.uid||c.diaVisita!==diaActual)return alert('Este cliente no está asignado a su ruta de hoy.');
+ // La fecha de la visita sigue siendo HOY en Firestore aunque el plan consultado sea otro día.
+ // Verificar que el cliente sigue visible en la ruta elegida y pertenece al vendedor.
+ const diaPlan=document.getElementById('rutasFiltroDia')?.value||'';
+ const rutaPlan=document.getElementById('rutasFiltroNumero')?.value||'';
+ if(!document.getElementById('rutas')?.classList.contains('active')||
+    !diaPlan||!c||String(c.vendedorId)!==auth.uid||c.diaVisita!==diaPlan||
+    (rutaPlan&&String(c.ruta||'')!==rutaPlan))return alert('Este cliente no pertenece al día y la ruta seleccionados.');
  const llave=fecha+'|'+clienteId;
  if(gmcVisitaEscribiendo.has(llave))return;
  gmcVisitaEscribiendo.add(llave);renderRutas();
