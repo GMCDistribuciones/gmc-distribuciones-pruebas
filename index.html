@@ -2356,7 +2356,7 @@ function gmcAbonarDesdeRutas(id,clienteId){
 
 function lineaVentaHtml(){
  const opts=db.productos.map(p=>`<option value="${p.id}">${esc(p.nombre)} | ${money(p.precio)}</option>`).join('');
- return `<div class="row"><div class="c6"><label>Producto</label><select id="docProd">${opts}</select></div><div class="c2"><label>Cantidad</label><input id="docCant" type="number" step="0.01" value="1"></div><div class="c2"><label>Precio</label><input id="docPrecio" type="number" step="0.01"></div><div class="c2"><label>Descuento</label><input id="docDesc" type="number" step="0.01" value="0"></div></div><button class="btn btn-light" style="margin-top:8px" onclick="agregarLinea()">+ Agregar línea</button><div id="docLineas" style="margin-top:10px"></div>`
+ return `<div class="row"><div class="c6"><label>Producto</label><select id="docProd">${opts}</select></div><div class="c2"><label>Cantidad</label><input id="docCant" type="number" min="1" step="1" inputmode="numeric" value="1" onkeydown="gmcBloquearDecimalCantidadVenta(event)" oninput="gmcValidarEntradaUnidadesVenta(this)"></div><div class="c2"><label>Precio</label><input id="docPrecio" type="number" step="0.01"></div><div class="c2"><label>Descuento</label><input id="docDesc" type="number" step="0.01" value="0"></div></div><button class="btn btn-light" style="margin-top:8px" onclick="agregarLinea()">+ Agregar línea</button><div id="docLineas" style="margin-top:10px"></div>`
 }
 let tempLineas=[],tempTipo='';
 function modalVenta(){
@@ -2372,6 +2372,7 @@ function modalCompra(){
 }
 function agregarLinea(){
  let p=db.productos.find(x=>x.id===docProd.value),q=+docCant.value||0,pr=+docPrecio.value||0,desc=+docDesc.value||0;if(!p||q<=0)return alert('Seleccione producto y cantidad');
+ if(tempTipo==='venta'&&!gmcCantidadUnidadesVentaValida(q))return alert('La cantidad de venta debe ser un número entero mayor que cero.');
  let bruto=q*pr-desc;tempLineas.push({productoId:p.id,nombre:p.nombre,cantidad:q,precio:pr,descuento:desc,costo:p.costo,base:bruto,total:bruto});
  renderLineas()
 }
@@ -2391,6 +2392,7 @@ function guardarDocumento(){
   if(tempTipo==='compra'&&window.gmcGuardarDocumentoCompraFirebase)return window.gmcGuardarDocumentoCompraFirebase();
   if(tempTipo==='venta'&&window.gmcGuardarDocumentoVentaFirebase)return window.gmcGuardarDocumentoVentaFirebase();
  if(!tempLineas.length)return alert('Agregue al menos un producto');
+ if(tempTipo==='venta'&&!gmcValidarTodasUnidadesVenta(tempLineas))return alert('Las cantidades de la venta deben ser números enteros mayores que cero.');
  let tercero=(tempTipo==='venta'?db.clientes:db.proveedores).find(x=>x.id===docTercero.value);
  let d={id:uid(),fecha:docFecha.value,numero:docNum.value.trim(),terceroId:docTercero.value,tercero:tercero?.nombre||(tempTipo==='venta'?'Consumidor final':'Sin proveedor'),lineas:tempLineas,base:tempLineas.reduce((a,l)=>a+l.base,0),total:tempLineas.reduce((a,l)=>a+l.total,0),costo:tempLineas.reduce((a,l)=>a+l.costo*l.cantidad,0)};
  if(tempTipo==='venta'){
@@ -2487,13 +2489,13 @@ function editarVenta(id){
  const clienteRegistrado=db.clientes.some(c=>c.id===v.terceroId);
  const clientes='<option value="">Consumidor final / personalizado</option>'+db.clientes.map(c=>`<option value="${esc(c.id)}" ${c.id===v.terceroId?'selected':''}>${esc(c.nombre)}</option>`).join('');
  const opciones='<option value="">Seleccionar producto...</option>'+db.productos.map(p=>`<option value="${esc(p.id)}">${esc(p.nombre)}</option>`).join('');
- openModal('Editar venta '+(v.numero||'S/N'),`<p class="note">Se corregirá la venta original y el inventario por diferencia de cantidades. No se genera otra venta.</p><div class="row"><div class="c3"><label>Fecha</label><input id="edvFecha" type="date" value="${esc(v.fecha)}"></div><div class="c3"><label>Documento</label><input id="edvNumero" value="${esc(v.numero||'')}"></div><div class="c6"><label>Seleccionar cliente</label><select id="edvCliente" onchange="const p=db.clientes.find(x=>x.id===this.value);edvNombre.value=p?.nombre||'Consumidor final'">${clientes}</select></div><div class="c6"><label>Nombre del cliente</label><input id="edvNombre" value="${esc(v.tercero||'Consumidor final')}"></div><div class="c6"><label>Comentario</label><input id="edvComentario" value="${esc(v.comentario||'')}"></div></div><h3 style="margin-top:18px">Productos de la venta</h3><div id="edvLineas"></div><div class="row" style="margin-top:14px"><div class="c6"><label>Añadir producto</label><select id="edvNuevoProducto" onchange="const p=db.productos.find(x=>x.id===this.value);edvNuevoPrecio.value=p?Number(p.precio||0):''">${opciones}</select></div><div class="c2"><label>Cantidad</label><input id="edvNuevaCantidad" type="number" min="0.01" step="0.01" value="1"></div><div class="c2"><label>Precio</label><input id="edvNuevoPrecio" type="number" min="0" step="0.01"></div><div class="c2"><label>Descuento</label><input id="edvNuevoDesc" type="number" min="0" step="0.01" value="0"></div></div><button class="btn btn-light" style="margin-top:10px" onclick="agregarProductoEdicion()">+ Agregar producto</button><div class="actions" style="justify-content:flex-end;margin-top:16px"><button class="btn btn-light" onclick="cerrarModal()">Cancelar</button><button class="btn btn-success" onclick="guardarEdicionVenta('${esc(id)}')">Guardar cambios</button></div>`);
+ openModal('Editar venta '+(v.numero||'S/N'),`<p class="note">Se corregirá la venta original y el inventario por diferencia de cantidades. No se genera otra venta.</p><div class="row"><div class="c3"><label>Fecha</label><input id="edvFecha" type="date" value="${esc(v.fecha)}"></div><div class="c3"><label>Documento</label><input id="edvNumero" value="${esc(v.numero||'')}"></div><div class="c6"><label>Seleccionar cliente</label><select id="edvCliente" onchange="const p=db.clientes.find(x=>x.id===this.value);edvNombre.value=p?.nombre||'Consumidor final'">${clientes}</select></div><div class="c6"><label>Nombre del cliente</label><input id="edvNombre" value="${esc(v.tercero||'Consumidor final')}"></div><div class="c6"><label>Comentario</label><input id="edvComentario" value="${esc(v.comentario||'')}"></div></div><h3 style="margin-top:18px">Productos de la venta</h3><div id="edvLineas"></div><div class="row" style="margin-top:14px"><div class="c6"><label>Añadir producto</label><select id="edvNuevoProducto" onchange="const p=db.productos.find(x=>x.id===this.value);edvNuevoPrecio.value=p?Number(p.precio||0):''">${opciones}</select></div><div class="c2"><label>Cantidad</label><input id="edvNuevaCantidad" type="number" min="1" step="1" inputmode="numeric" value="1" onkeydown="gmcBloquearDecimalCantidadVenta(event)" oninput="gmcValidarEntradaUnidadesVenta(this)"></div><div class="c2"><label>Precio</label><input id="edvNuevoPrecio" type="number" min="0" step="0.01"></div><div class="c2"><label>Descuento</label><input id="edvNuevoDesc" type="number" min="0" step="0.01" value="0"></div></div><button class="btn btn-light" style="margin-top:10px" onclick="agregarProductoEdicion()">+ Agregar producto</button><div class="actions" style="justify-content:flex-end;margin-top:16px"><button class="btn btn-light" onclick="cerrarModal()">Cancelar</button><button class="btn btn-success" onclick="guardarEdicionVenta('${esc(id)}')">Guardar cambios</button></div>`);
  if(!clienteRegistrado)document.getElementById('edvCliente').value='';
  renderLineasEdicion();
 }
 function renderLineasEdicion(){
  const t=document.getElementById('edvLineas');if(!t)return;
- t.innerHTML=`<div class="table-wrap"><table><thead><tr><th>Producto</th><th>Cantidad</th><th>Precio unit.</th><th>Descuento</th><th></th></tr></thead><tbody>${ventaEdicionLineas.map((l,i)=>`<tr><td>${esc(l.nombre)}</td><td><input type="number" min="0.01" step="0.01" data-edcampo="cantidad" data-edi="${i}" value="${esc(l.cantidad)}"></td><td><input type="number" min="0" step="0.01" data-edcampo="precio" data-edi="${i}" value="${esc(l.precio)}"></td><td><input type="number" min="0" step="0.01" data-edcampo="descuento" data-edi="${i}" value="${esc(l.descuento||0)}"></td><td><button class="btn btn-light danger" onclick="quitarLineaEdicion(${i})">Quitar</button></td></tr>`).join('')}</tbody></table></div>`;
+ t.innerHTML=`<div class="table-wrap"><table><thead><tr><th>Producto</th><th>Cantidad</th><th>Precio unit.</th><th>Descuento</th><th></th></tr></thead><tbody>${ventaEdicionLineas.map((l,i)=>`<tr><td>${esc(l.nombre)}</td><td><input type="number" min="1" step="1" inputmode="numeric" data-edcampo="cantidad" data-edi="${i}" value="${esc(l.cantidad)}" onkeydown="gmcBloquearDecimalCantidadVenta(event)" oninput="gmcValidarEntradaUnidadesVenta(this)"></td><td><input type="number" min="0" step="0.01" data-edcampo="precio" data-edi="${i}" value="${esc(l.precio)}"></td><td><input type="number" min="0" step="0.01" data-edcampo="descuento" data-edi="${i}" value="${esc(l.descuento||0)}"></td><td><button class="btn btn-light danger" onclick="quitarLineaEdicion(${i})">Quitar</button></td></tr>`).join('')}</tbody></table></div>`;
 }
 function leerLineasEdicion(){
  document.querySelectorAll('[data-edcampo]').forEach(el=>{let l=ventaEdicionLineas[Number(el.dataset.edi)];if(l)l[el.dataset.edcampo]=Number(el.value)});
@@ -2503,7 +2505,8 @@ function agregarProductoEdicion(){
  leerLineasEdicion();
  const p=db.productos.find(x=>x.id===edvNuevoProducto.value);if(!p)return alert('Seleccione un producto');
  const cantidad=Number(edvNuevaCantidad.value),precio=Number(edvNuevoPrecio.value),descuento=Number(edvNuevoDesc.value);
- if(!Number.isFinite(cantidad)||cantidad<=0||!Number.isFinite(precio)||precio<0||!Number.isFinite(descuento)||descuento<0||descuento>cantidad*precio)return alert('Revise la cantidad, el precio y el descuento');
+ if(!gmcCantidadUnidadesVentaValida(cantidad))return alert('La cantidad de venta debe ser un número entero mayor que cero.');
+ if(!Number.isFinite(precio)||precio<0||!Number.isFinite(descuento)||descuento<0||descuento>cantidad*precio)return alert('Revise la cantidad, el precio y el descuento');
  ventaEdicionLineas.push({productoId:p.id,nombre:p.nombre,cantidad,precio,descuento,costo:Number(p.costo||0)});
  renderLineasEdicion();
  edvNuevoProducto.value='';edvNuevaCantidad.value='1';edvNuevoPrecio.value='';edvNuevoDesc.value='0';
@@ -2543,7 +2546,8 @@ function guardarEdicionVenta(id){
  const nuevas=[];
  for(const l of ventaEdicionLineas){
    const cantidad=Number(l.cantidad),precio=Number(l.precio),descuento=Number(l.descuento||0),costo=Number(l.costo||0);
-   if(!Number.isFinite(cantidad)||cantidad<=0||!Number.isFinite(precio)||precio<0||!Number.isFinite(descuento)||descuento<0||descuento>cantidad*precio)return alert('Revise cantidades, precios y descuentos de los productos');
+   if(!gmcCantidadUnidadesVentaValida(cantidad))return alert('Las cantidades de la venta deben ser números enteros mayores que cero.');
+   if(!Number.isFinite(precio)||precio<0||!Number.isFinite(descuento)||descuento<0||descuento>cantidad*precio)return alert('Revise cantidades, precios y descuentos de los productos');
    const base=Math.max(0,cantidad*precio-descuento);
    nuevas.push({productoId:l.productoId,nombre:l.nombre,cantidad,precio,descuento,costo,base,total:base});
  }
@@ -3040,6 +3044,26 @@ document.getElementById('ventaCategorias').addEventListener('click',e=>{
   const btn=e.target.closest('[data-venta-categoria]');
   if(btn){ventaCategoriaActual=btn.dataset.ventaCategoria;renderCatalogoVenta()}
 });
+// Unidades vendidas: solo enteros positivos. No modifica unidades de compras o asignaciones.
+function gmcCantidadUnidadesVentaValida(valor){
+ const n=Number(valor);
+ return Number.isSafeInteger(n)&&n>0;
+}
+function gmcBloquearDecimalCantidadVenta(event){
+ if(['.',',','e','E','+','-'].includes(event.key))event.preventDefault();
+}
+function gmcValidarEntradaUnidadesVenta(campo){
+ const valor=String(campo.value||'');
+ if(!valor)return; // Se permite vaciar temporalmente el campo mientras se escribe.
+ if(!/^[1-9]\d*$/.test(valor)||!Number.isSafeInteger(Number(valor))){
+   campo.value=campo.dataset.ultimaCantidadEntera||'1';
+   return;
+ }
+ campo.dataset.ultimaCantidadEntera=valor;
+}
+function gmcValidarTodasUnidadesVenta(lineas){
+ return Array.isArray(lineas)&&lineas.length>0&&lineas.every(l=>gmcCantidadUnidadesVentaValida(l.cantidad));
+}
 function cantidadReservadaVenta(pid){return ventaRapidaLineas.filter(l=>l.productoId===pid).reduce((a,l)=>a+Number(l.cantidad||0),0)}
 function abrirProductoVenta(id){
   if(ventaClienteActivo===null)return alert('Seleccione primero el cliente');
@@ -3065,7 +3089,7 @@ function abrirProductoVenta(id){
         <div class="venta-modal-campos">
           <div class="venta-modal-precio-campo"><label>Precio de venta</label><select id="vModalPvp" onchange="cambiarPrecioPvpModalVenta()">${opciones}</select></div>
           ${vendedorPuedePrecioDiferenciadoTabaco(p)?`<div class="venta-modal-precio-campo" id="vModalPrecioPvp6Contenedor" style="display:none"><label>Precio PVP6 (manual)</label><input id="vModalPrecioDiferenciadoTabaco" type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="Ingrese el precio unitario PVP6" oninput="calcularTotalProductoVenta()"><small class="muted">Obligatorio al elegir PVP6. Solo se aplica a este producto en esta venta.</small></div>`:''}
-          <div class="venta-modal-cantidad-campo"><label>Cantidad</label><div class="venta-modal-qty"><button type="button" onclick="ajustarCantidadModalVenta(-1)">−</button><input id="vModalCantidad" type="number" min="0.01" step="0.01" value="1" oninput="calcularTotalProductoVenta()"><button type="button" onclick="ajustarCantidadModalVenta(1)">+</button></div></div>
+          <div class="venta-modal-cantidad-campo"><label>Cantidad</label><div class="venta-modal-qty"><button type="button" onclick="ajustarCantidadModalVenta(-1)">−</button><input id="vModalCantidad" type="number" min="1" step="1" inputmode="numeric" value="1" onkeydown="gmcBloquearDecimalCantidadVenta(event)" oninput="gmcValidarEntradaUnidadesVenta(this);calcularTotalProductoVenta()"><button type="button" onclick="ajustarCantidadModalVenta(1)">+</button></div></div>
         </div>
         <div class="venta-modal-tot" id="vModalTotal">Total: $0.00</div>
         <div class="actions venta-modal-acciones"><button class="btn btn-light" onclick="cerrarModal()">Cancelar</button><button class="btn btn-success" onclick="agregarProductoGraficoVenta()">＋ Agregar al pedido</button></div>
@@ -3082,8 +3106,10 @@ function cambiarPrecioPvpModalVenta(){
 }
 function ajustarCantidadModalVenta(delta){
   const el=document.getElementById('vModalCantidad');
-  const actual=Number(el.value)||0;
-  el.value=String(Math.max(0.01,Math.round((actual+delta)*100)/100));
+  const actual=Number(el.value);
+  const cantidad=gmcCantidadUnidadesVentaValida(actual)?actual:1;
+  el.value=String(Math.max(1,cantidad+delta));
+  el.dataset.ultimaCantidadEntera=el.value;
   calcularTotalProductoVenta();
 }
 function calcularTotalProductoVenta(){
@@ -3092,9 +3118,11 @@ function calcularTotalProductoVenta(){
   const nivel=Number(document.getElementById('vModalPvp').value);
   const diferenciado=precioDiferenciadoTabacoModal(p);
   const precio=diferenciado===null?precioProductoPorLista(p,nivel):diferenciado;
-  const cantidad=Number(document.getElementById('vModalCantidad').value)||0;
+  const cantidad=Number(document.getElementById('vModalCantidad').value);
   const total=cantidad*precio;
-  document.getElementById('vModalTotal').textContent=Number.isFinite(total)?'Total: '+money(total):'Total: ingrese un precio PVP6 válido';
+  document.getElementById('vModalTotal').textContent=!gmcCantidadUnidadesVentaValida(cantidad)
+    ?'Total: ingrese una cantidad entera mayor que cero'
+    :Number.isFinite(total)?'Total: '+money(total):'Total: ingrese un precio PVP6 válido';
 }
 function agregarProductoGraficoVenta(){
   if(ventaClienteActivo===null)return alert('Debe iniciar la venta con un cliente');
@@ -3105,14 +3133,15 @@ function agregarProductoGraficoVenta(){
   const precio=diferenciado===null?precioProductoPorLista(p,nivel):diferenciado;
   const esDiferenciado=diferenciado!==null;
   const cantidad=Number(document.getElementById('vModalCantidad').value);
-  if(!Number.isFinite(cantidad)||cantidad<=0||!Number.isFinite(precio)||precio<=0)return alert('Verifique el precio y la cantidad');
+  if(!gmcCantidadUnidadesVentaValida(cantidad))return alert('La cantidad de venta debe ser un número entero mayor que cero.');
+  if(!Number.isFinite(precio)||precio<=0)return alert('Verifique el precio de venta');
   if(cantidad+cantidadReservadaVenta(p.id)>stockDisponibleVenta(p)+0.000001)return alert('La cantidad supera el stock disponible, incluidos los artículos ya agregados');
   const base=cantidad*precio;
   const existente=ventaRapidaLineas.find(l=>l.productoId===p.id&&l.pvp===nivel&&Number(l.descuento||0)===0
     && Boolean(l.precioDiferenciado)===esDiferenciado
     && (!esDiferenciado||Math.round(Number(l.precio)*100)===Math.round(precio*100)));
   if(existente){
-    existente.cantidad=Math.round((existente.cantidad+cantidad)*100)/100;
+    existente.cantidad+=cantidad;
     existente.base=existente.cantidad*precio;
     existente.total=existente.base;
   }else{
@@ -3129,7 +3158,7 @@ function ajustarCantidadVenta(i,delta){
   }
   if(l.cantidad+cambio<=0)ventaRapidaLineas.splice(i,1);
   else{
-    l.cantidad=Math.round((l.cantidad+cambio)*100)/100;
+    l.cantidad+=cambio;
     l.base=l.cantidad*l.precio;
     l.total=l.base;
   }
@@ -3326,6 +3355,7 @@ function guardarVentaRapida(){
   if(usuarioActual&&!adminAutenticado&&cierreHechoHoyUsuario(usuarioActual.id))return alert('Su caja ya fue cerrada hoy. No puede registrar más ventas hasta mañana.');
   if(ventaClienteActivo===null)return alert('Seleccione primero el cliente de la venta');
   if(!ventaRapidaLineas.length)return alert('Agregue al menos un producto');
+  if(!gmcValidarTodasUnidadesVenta(ventaRapidaLineas))return alert('Las cantidades de la venta deben ser números enteros mayores que cero.');
   if(!document.getElementById('rvFecha').value)return alert('Seleccione una fecha');
   // Se verifica el stock final por producto, incluso si se añadieron líneas con distintos PVP.
   const reservadas=new Map();
@@ -5404,7 +5434,8 @@ function gmcValidarLineasVenta(lineas){
  const cantidades=new Map();
  for(const l of lineas){
   const q=Number(l.cantidad),precio=Number(l.precio),descuento=Number(l.descuento||0);
-  if(!db.productos.some(p=>p.id===l.productoId)||!Number.isFinite(q)||q<=0||!Number.isFinite(precio)||precio<0||!Number.isFinite(descuento)||descuento<0||descuento>q*precio)throw Error('Revise productos, cantidades, precios y descuentos antes de registrar la venta.');
+  if(!Number.isSafeInteger(q)||q<=0)throw Error('Las cantidades de venta deben ser números enteros mayores que cero.');
+  if(!db.productos.some(p=>p.id===l.productoId)||!Number.isFinite(precio)||precio<0||!Number.isFinite(descuento)||descuento<0||descuento>q*precio)throw Error('Revise productos, cantidades, precios y descuentos antes de registrar la venta.');
   cantidades.set(l.productoId,gmcRedondear6((cantidades.get(l.productoId)||0)+q));
  }
  return cantidades;
