@@ -251,7 +251,11 @@
   .gmc-venta-ruta-cabecera{position:sticky;top:-12px;z-index:2;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;margin:-12px -12px 12px;background:#0b3d73;color:white}
   .gmc-venta-ruta-cabecera .btn{flex-shrink:0}
   .gmc-venta-ruta-contenido{max-width:1380px;margin:0 auto}
-  @media(max-width:620px){.gmc-venta-ruta-superpuesta{padding:8px}.gmc-venta-ruta-cabecera{top:-8px;margin:-8px -8px 8px;padding:9px;gap:8px}.gmc-venta-ruta-cabecera .btn{font-size:12px;padding:8px}}
+  .gmc-venta-ruta-precios{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:9px 12px;margin:0 0 10px;background:white;border:1px solid #cddff5;border-radius:8px}
+  .gmc-venta-ruta-precios label{margin:0;white-space:nowrap}
+  .gmc-venta-ruta-precios select{width:auto;min-width:230px;max-width:100%}
+  .gmc-venta-ruta-precios small{font-size:11px;color:#667085}
+  @media(max-width:620px){.gmc-venta-ruta-superpuesta{padding:8px}.gmc-venta-ruta-cabecera{top:-8px;margin:-8px -8px 8px;padding:9px;gap:8px}.gmc-venta-ruta-cabecera .btn{font-size:12px;padding:8px}.gmc-venta-ruta-precios select{width:100%;min-width:0}}
   /* Exclusivamente presentación de egresos y abonos en cierres de caja. */
   .cierre-egreso{color:#c93434!important;font-weight:700}
   .cierre-abono{color:#0f5aa8!important;font-weight:700}
@@ -2207,7 +2211,7 @@ function gmcVenderDesdeRuta(clienteId){
  const superpuesta=document.createElement('div');
  superpuesta.className='gmc-venta-ruta-superpuesta';
  superpuesta.id='gmcVentaRutaSuperpuesta';
- superpuesta.innerHTML=`<div class="gmc-venta-ruta-cabecera"><div><strong>🛒 Venta al cliente de la ruta</strong><div style="font-size:12px;margin-top:3px">${esc(c.nombreCliente||c.razonSocial||c.nombre||'Cliente')} · Ruta ${esc(c.ruta||'—')}</div></div><button type="button" class="btn btn-light" onclick="gmcCerrarVentaDesdeRuta()">← Volver a Rutas</button></div><div class="gmc-venta-ruta-contenido"></div>`;
+ superpuesta.innerHTML=`<div class="gmc-venta-ruta-cabecera"><div><strong>🛒 Venta al cliente de la ruta</strong><div style="font-size:12px;margin-top:3px">${esc(c.nombreCliente||c.razonSocial||c.nombre||'Cliente')} · Ruta ${esc(c.ruta||'—')}</div></div><button type="button" class="btn btn-light" onclick="gmcCerrarVentaDesdeRuta()">← Volver a Rutas</button></div><div class="gmc-venta-ruta-precios"><label for="gmcRutaListaPvp">Lista de precios de esta venta</label><select id="gmcRutaListaPvp" onchange="gmcSeleccionarListaPvpDesdeRuta(this.value)">${Array.from({length:5},(_,i)=>`<option value="${i+1}">PVP${i+1}</option>`).join('')}<option value="6" ${usuarioActual&&!adminAutenticado&&(db.productos||[]).some(p=>gmcCategoriaTabacos(p))?'':'disabled'}>PVP6 — Precio manual para TABACOS</option></select><small>El precio PVP6 se ingresa al seleccionar cada producto de la categoría TABACOS.</small></div><div class="gmc-venta-ruta-contenido"></div>`;
  document.querySelector('.app').appendChild(superpuesta);
  const overflowAnterior=document.body.style.overflow;
  gmcVentaRutaActiva={marca,ventas,superpuesta,overflowAnterior};
@@ -2222,6 +2226,20 @@ function gmcVenderDesdeRuta(clienteId){
    return alert('El cliente no está disponible para vender. Actualice la ruta.');
  }
  iniciarVentaConCliente();
+ const listaRuta=document.getElementById('gmcRutaListaPvp');if(listaRuta)listaRuta.value=String(ventaPvpActivo);
+}
+function gmcSeleccionarListaPvpDesdeRuta(valor){
+ if(!gmcVentaRutaActiva||!usuarioActual||adminAutenticado)return;
+ const nivel=Number(valor),selector=document.getElementById('gmcRutaListaPvp');
+ if(!Number.isInteger(nivel)||nivel<1||nivel>6){if(selector)selector.value=String(ventaPvpActivo);return;}
+ if(nivel===6&&!(db.productos||[]).some(p=>gmcCategoriaTabacos(p))){
+  if(selector)selector.value=String(ventaPvpActivo);
+  return alert('PVP6 solo está disponible para productos de la categoría TABACOS.');
+ }
+ ventaPvpActivo=nivel;
+ const etiqueta=document.getElementById('ventaPvpEtiqueta');
+ if(etiqueta)etiqueta.textContent='Lista PVP'+nivel;
+ renderCatalogoVenta();
 }
 function gmcCerrarVentaDesdeRuta(confirmada=false){
  const estado=gmcVentaRutaActiva;
@@ -2854,14 +2872,15 @@ function actualizarOpcionesPvpInicio(){
   const nivelElegido=selector.value||'1';
   const productoId=document.getElementById('ventaProductoConsultaPvp').value;
   const producto=db.productos.find(p=>p.id===productoId);
+  const existeCategoriaTabacos=!!usuarioActual&&!adminAutenticado&&(db.productos||[]).some(p=>gmcCategoriaTabacos(p));
   selector.innerHTML=Array.from({length:5},(_,i)=>{
     const nivel=i+1;
     const precio=producto?precioProductoPorLista(producto,nivel):null;
     return `<option value="${nivel}">PVP${nivel}${producto?' — '+(precio>0?money(precio):'Sin configurar'):''}</option>`;
   }).join('')+(usuarioActual&&!adminAutenticado
-    ? `<option value="6" ${vendedorPuedePrecioDiferenciadoTabaco(producto)?'':'disabled'}>PVP6 — ${vendedorPuedePrecioDiferenciadoTabaco(producto)?'Precio manual (TABACOS)':'Solo TABACOS (seleccione un tabaco arriba)'}</option>`
+    ? `<option value="6" ${existeCategoriaTabacos?'':'disabled'}>PVP6 — Precio manual (categoría TABACOS)</option>`
     : '');
-  selector.value=nivelElegido==='6'&&!vendedorPuedePrecioDiferenciadoTabaco(producto)?'1':nivelElegido;
+  selector.value=nivelElegido==='6'&&!existeCategoriaTabacos?'1':nivelElegido;
 }
 function iniciarVentaConCliente(){
   if(ventaClienteActivo!==null)return;
@@ -2897,13 +2916,17 @@ function precioProductoPorLista(p, nivel){
   return Number(nivel===1?(p.pvp1??p.precio??0):(p['pvp'+nivel]??0));
 }
 function listaPrecioDisponible(p, preferida){
-  if(precioProductoPorLista(p,preferida)>0)return preferida;
+  if(preferida>=1&&preferida<=5&&precioProductoPorLista(p,preferida)>0)return preferida;
   for(let i=1;i<=5;i++){if(precioProductoPorLista(p,i)>0)return i;}
   return 0;
 }
-// Precio especial opcional para tabacos exclusivamente en ventas de vendedores.
+// PVP6 corresponde a TODOS los productos registrados en la categoría TABACO/TABACOS.
+function gmcCategoriaTabacos(producto){
+  const categoria=String(producto?.categoria||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().toUpperCase();
+  return categoria==='TABACO'||categoria==='TABACOS';
+}
 function vendedorPuedePrecioDiferenciadoTabaco(producto){
-  return !!usuarioActual && !adminAutenticado && /^tabacos?$/i.test(String(producto?.categoria||'').trim());
+  return !!usuarioActual&&!adminAutenticado&&gmcCategoriaTabacos(producto);
 }
 function precioDiferenciadoTabacoModal(producto){
   // PVP6 solo se selecciona manualmente para TABACO/TABACOS por un vendedor.
