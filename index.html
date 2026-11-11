@@ -692,16 +692,16 @@
         <!-- Orden manual de visitas: solo el administrador. Usa día/ruta existentes. -->
         <div id="gmcOrdenVisitasAdmin" class="card" style="display:none;margin:12px 0;background:#f8fbff">
           <h3>Orden de visita de clientes por vendedor, día y ruta</h3>
-          <p class="note">El administrador determina la secuencia de visitas de cada vendedor por separado. Seleccione el vendedor, el día y la ruta, y utilice «Primero», «Subir» o «Bajar». Cada vendedor visualizará solo su propio orden en Rutas. No cambia el día, la ruta, el vendedor ni las cuentas pendientes.</p>
+          <p class="note">El administrador asigna el número de visita a cada cliente de un vendedor, día y ruta. Escriba números del 1 al total de clientes, sin repetirlos, y pulse «Guardar orden» al terminar. Los cambios se preparan localmente; no se envían a Firestore hasta guardar. El vendedor verá el orden confirmado en Rutas. No cambia el día, la ruta, el vendedor ni las cuentas pendientes.</p>
           <div class="toolbar" style="margin-top:10px">
             <div><label>Usuario / vendedor</label><select id="gmcOrdenVendedor" onchange="gmcPaginaOrden25=1;gmcRenderOrdenVisitas()"><option value="">Seleccione el vendedor</option></select></div>
             <div><label>Día de visita</label><select id="gmcOrdenDia" onchange="gmcPaginaOrden25=1;gmcRenderOrdenVisitas()"><option value="">Seleccione el día</option><option>Lunes</option><option>Martes</option><option>Miércoles</option><option>Jueves</option><option>Viernes</option><option>Sábado</option><option>Domingo</option></select></div>
             <div><label>Ruta</label><select id="gmcOrdenRuta" onchange="gmcPaginaOrden25=1;gmcRenderOrdenVisitas()"><option value="">Seleccione la ruta</option></select></div>
           </div>
           <div class="toolbar" style="margin:8px 0"><div style="flex:1 1 220px"><label for="gmcBuscarOrden25">Buscar cliente en esta ruta</label><input type="search" id="gmcBuscarOrden25" autocomplete="off" placeholder="Nombre, razón social o identificación" oninput="gmcPaginaOrden25=1;gmcRenderOrdenVisitas()"></div></div>
-          <div class="actions" style="margin:8px 0"><button type="button" class="btn btn-primary" onclick="gmcImprimirRutaA4()">🖨 Imprimir ruta del día (A4) · todos los clientes</button></div>
+          <div class="actions" style="margin:8px 0"><button type="button" class="btn btn-success" id="gmcGuardarOrdenNumerico" disabled onclick="gmcGuardarOrdenVisitas()">💾 Guardar orden de visitas</button><button type="button" class="btn btn-primary" onclick="gmcImprimirRutaA4()">🖨 Imprimir ruta del día (A4) · todos los clientes</button></div>
           <p id="gmcOrdenEstado" class="muted" style="font-size:12px" aria-live="polite">Seleccione el vendedor, el día y la ruta para ordenar los clientes.</p>
-          <div class="table-wrap"><table><thead><tr><th>Visita</th><th>Cliente</th><th>Identificación</th><th>Vendedor asignado</th><th>Ordenar</th></tr></thead><tbody id="gmcOrdenTabla"></tbody></table></div>
+          <div class="table-wrap"><table><thead><tr><th>Visita actual</th><th>Cliente</th><th>Identificación</th><th>Vendedor asignado</th><th>Nuevo orden</th></tr></thead><tbody id="gmcOrdenTabla"></tbody></table></div>
           <div id="gmcPagOrden25" aria-live="polite"></div>
         </div>
         <!-- Búsqueda y paginación visual: no modifica fichas ni Firestore. -->
@@ -1975,10 +1975,79 @@ function gmcCompararOrdenVisitas(a,b){
 }
 let gmcOrdenVistaClientes=[];
 let gmcOrdenGuardando=false;
-// El orden administrativo se organiza por vendedor + día + ruta, sin cambiar fichas de clientes.
+// Borradores de orden, solo en memoria y separados por vendedor/día/ruta.
+// Ningún cambio se escribe en Firestore hasta pulsar Guardar.
+const gmcBorradoresOrdenVisitas=new Map();
 function gmcCoincideVendedorOrden(c,vendedorId){
  return vendedorId==='__sin_asignar__'?!c.vendedorId:String(c.vendedorId||'')===String(vendedorId);
 }
+function gmcClaveBorradorOrdenVisitas(vendedor,dia,ruta){
+ return JSON.stringify([String(vendedor),String(dia),String(ruta)]);
+}
+function gmcBorradorOrdenVisitas(vendedor,dia,ruta,clientes){
+ const clave=gmcClaveBorradorOrdenVisitas(vendedor,dia,ruta);
+ const firma=clientes.map(c=>String(c.id)+'\u0001'+String(Number(c.ordenVisita||0))).join('\u0002');
+ let borrador=gmcBorradoresOrdenVisitas.get(clave);
+ if(!borrador||(!borrador.modificado&&borrador.firma!==firma)){
+  borrador={clave,firma,ids:clientes.map(c=>String(c.id)),
+   valores:new Map(clientes.map((c,i)=>[String(c.id),String(i+1)])),
+   base:new Map(clientes.map(c=>[String(c.id),Number(c.ordenVisita||0)])),modificado:false};
+  gmcBorradoresOrdenVisitas.set(clave,borrador);
+ }
+ // Si otro dispositivo cambia los clientes o sus posiciones, nunca sobrescribirlo sin advertir.
+ borrador.desactualizado=borrador.firma!==firma;
+ return borrador;
+}
+function gmcValidarNumerosOrdenVisitas(clientes,borrador){
+ const valores=clientes.map(c=>String(borrador.valores.get(String(c.id))??'').trim());
+ const numeros=valores.map(v=>/^\d+$/.test(v)?Number(v):NaN);
+ const fuera=numeros.findIndex(n=>!Number.isSafeInteger(n)||n<1||n>clientes.length);
+ if(fuera>=0)return {valido:false,mensaje:'Cada cliente necesita un número entero entre 1 y '+clientes.length+'.'};
+ const unicos=new Set(numeros);
+ if(unicos.size!==clientes.length)return {valido:false,mensaje:'Hay números de visita repetidos. Asigne un número distinto a cada cliente antes de guardar.'};
+ const posiciones=new Map(clientes.map((c,i)=>[String(c.id),numeros[i]]));
+ return {valido:true,ordenados:clientes.slice().sort((a,b)=>posiciones.get(String(a.id))-posiciones.get(String(b.id)))};
+}
+function gmcActualizarEstadoOrdenVisitas(){
+ const vendedor=document.getElementById('gmcOrdenVendedor');
+ const dia=document.getElementById('gmcOrdenDia');
+ const ruta=document.getElementById('gmcOrdenRuta');
+ const estado=document.getElementById('gmcOrdenEstado');
+ const boton=document.getElementById('gmcGuardarOrdenNumerico');
+ if(!vendedor||!dia||!ruta||!estado||!boton)return;
+ const clave=gmcClaveBorradorOrdenVisitas(vendedor.value,dia.value,ruta.value);
+ const borrador=gmcBorradoresOrdenVisitas.get(clave);
+ if(!borrador||!gmcOrdenVistaClientes.length){boton.disabled=true;return;}
+ const validacion=gmcValidarNumerosOrdenVisitas(gmcOrdenVistaClientes,borrador);
+ const pendiente=borrador.modificado;
+ boton.disabled=gmcOrdenGuardando||!pendiente||!validacion.valido||borrador.desactualizado||!window.gmcPuedeOrdenarVisitas?.();
+ if(gmcOrdenGuardando){estado.textContent='Verificando y guardando la secuencia en Firestore…';return;}
+ if(borrador.desactualizado){
+  estado.textContent='Los datos de esta ruta cambiaron en Firestore mientras se editaba. Recargue el aplicativo antes de volver a ordenar; no se guardó ningún cambio.';
+ }else if(pendiente&&!validacion.valido){
+  estado.textContent='Cambios locales pendientes · '+validacion.mensaje+' No se ha escrito nada en Firestore.';
+ }else if(pendiente){
+  estado.textContent='Cambios locales listos para guardar · '+gmcOrdenVistaClientes.length+' clientes · '+dia.value+' · Ruta '+ruta.value+'. Pulse «Guardar orden de visitas» para confirmar la secuencia completa.';
+ }else{
+  const busqueda=document.getElementById('gmcBuscarOrden25')?.value||'';
+  const totalFiltrados=gmcOrdenVistaClientes.filter(c=>gmcCoincideCliente25(c,busqueda)).length;
+  estado.textContent=gmcOrdenVistaClientes.length+' cliente(s) de '+(vendedor.selectedOptions[0]?.textContent||'')+' · '+totalFiltrados+' coincide(n) con la búsqueda · '+dia.value+' · Ruta '+ruta.value+'. Escriba los números de visita y guarde al terminar.';
+ }
+}
+window.gmcEditarOrdinalVisita=(indice,valor)=>{
+ if(gmcOrdenGuardando||!window.gmcPuedeOrdenarVisitas?.())return;
+ const cliente=gmcOrdenVistaClientes[indice];
+ const vendedor=document.getElementById('gmcOrdenVendedor')?.value;
+ const dia=document.getElementById('gmcOrdenDia')?.value;
+ const ruta=document.getElementById('gmcOrdenRuta')?.value;
+ if(!cliente||!vendedor||!dia||!ruta)return;
+ const borrador=gmcBorradoresOrdenVisitas.get(gmcClaveBorradorOrdenVisitas(vendedor,dia,ruta));
+ if(!borrador||borrador.desactualizado)return;
+ borrador.valores.set(String(cliente.id),String(valor));
+ borrador.modificado=gmcOrdenVistaClientes.some((c,i)=>String(borrador.valores.get(String(c.id))??'').trim()!==String(i+1));
+ gmcActualizarEstadoOrdenVisitas();
+};
+// El panel administrativo conserva búsqueda y paginación de 25, sin escribir al editar.
 function gmcRenderOrdenVisitas(){
  const panel=document.getElementById('gmcOrdenVisitasAdmin');
  const vendedor=document.getElementById('gmcOrdenVendedor');
@@ -1986,10 +2055,11 @@ function gmcRenderOrdenVisitas(){
  const ruta=document.getElementById('gmcOrdenRuta');
  const tabla=document.getElementById('gmcOrdenTabla');
  const estado=document.getElementById('gmcOrdenEstado');
- if(!panel||!vendedor||!dia||!ruta||!tabla||!estado)return;
+ const boton=document.getElementById('gmcGuardarOrdenNumerico');
+ if(!panel||!vendedor||!dia||!ruta||!tabla||!estado||!boton)return;
  const permitido=!!window.gmcPuedeOrdenarVisitas?.();
  panel.style.display=permitido?'':'none';
- if(!permitido){gmcOrdenVistaClientes=[];tabla.innerHTML='';return;}
+ if(!permitido){gmcOrdenVistaClientes=[];tabla.innerHTML='';boton.disabled=true;return;}
  const nombresUsuarios=new Map(cargarUsuarios().map(u=>[String(u.id),u.usuario]));
  const vendedores=new Map();
  let haySinAsignar=false;
@@ -2007,16 +2077,16 @@ function gmcRenderOrdenVisitas(){
  if(rutas.includes(actual))ruta.value=actual;
  if(!vendedor.value||!dia.value||!ruta.value){
   gmcOrdenVistaClientes=[];
+  boton.disabled=true;
   document.getElementById('gmcPagOrden25').innerHTML='';
   tabla.innerHTML='<tr><td colspan="5" class="empty">Seleccione vendedor, día y ruta para establecer el recorrido.</td></tr>';
   if(!gmcOrdenGuardando)estado.textContent='Seleccione un vendedor, un día y una ruta con clientes asignados.';
   return;
  }
  gmcOrdenVistaClientes=(db.clientes||[]).filter(c=>gmcCoincideVendedorOrden(c,vendedor.value)&&c.diaVisita===dia.value&&String(c.ruta||'').trim()===ruta.value).sort(gmcCompararOrdenVisitas);
- // Se pagina únicamente lo visible; los índices de los botones siguen siendo los globales.
+ const borrador=gmcBorradorOrdenVisitas(vendedor.value,dia.value,ruta.value,gmcOrdenVistaClientes);
  const filtroOrden25=document.getElementById('gmcBuscarOrden25')?.value||'';
- const ordenFiltrado25=gmcOrdenVistaClientes.map((cliente,indice)=>({cliente,indice}))
-   .filter(fila=>gmcCoincideCliente25(fila.cliente,filtroOrden25));
+ const ordenFiltrado25=gmcOrdenVistaClientes.map((cliente,indice)=>({cliente,indice})).filter(fila=>gmcCoincideCliente25(fila.cliente,filtroOrden25));
  const paginaOrden25=gmcPagina25(ordenFiltrado25,gmcPaginaOrden25);
  gmcPaginaOrden25=paginaOrden25.pagina;
  document.getElementById('gmcPagOrden25').innerHTML=gmcPaginadorClientes25(paginaOrden25,'orden');
@@ -2024,12 +2094,8 @@ function gmcRenderOrdenVisitas(){
  tabla.innerHTML=paginaOrden25.items.map(({cliente:c,indice:i})=>`<tr>
   <td><strong>${i+1}</strong></td><td>${esc(c.nombreCliente||c.razonSocial||c.nombre||'—')}</td>
   <td>${esc(c.identificacion||'—')}</td><td>${esc(usuarios.get(String(c.vendedorId))||c.vendedorNombre||'Sin asignar')}</td>
-  <td><div class="actions" style="gap:4px;flex-wrap:wrap">
-   <button type="button" class="btn btn-light" style="padding:6px" ${i===0||gmcOrdenGuardando?'disabled':''} onclick="gmcMoverOrdenVisita(${i},'primero')">Primero</button>
-   <button type="button" class="btn btn-light" style="padding:6px" ${i===0||gmcOrdenGuardando?'disabled':''} onclick="gmcMoverOrdenVisita(${i},'subir')">↑ Subir</button>
-   <button type="button" class="btn btn-light" style="padding:6px" ${i===gmcOrdenVistaClientes.length-1||gmcOrdenGuardando?'disabled':''} onclick="gmcMoverOrdenVisita(${i},'bajar')">↓ Bajar</button>
-  </div></td></tr>`).join('')||'<tr><td colspan="5" class="empty">No hay clientes para este día y ruta.</td></tr>';
- if(!gmcOrdenGuardando)estado.textContent=gmcOrdenVistaClientes.length+' cliente(s) del vendedor '+(vendedor.selectedOptions[0]?.textContent||'')+' · '+ordenFiltrado25.length+' coincide(n) con la búsqueda · '+dia.value+' · Ruta '+ruta.value+'. El orden se guarda en Cloud Firestore al mover un cliente.';
+  <td><input type="number" inputmode="numeric" step="1" min="1" max="${gmcOrdenVistaClientes.length}" style="width:95px;max-width:100%;padding:6px" aria-label="Número de visita de ${esc(c.nombreCliente||c.razonSocial||c.nombre||'cliente')}" value="${esc(borrador.valores.get(String(c.id))??'')}" ${gmcOrdenGuardando||borrador.desactualizado?'disabled':''} oninput="gmcEditarOrdinalVisita(${i},this.value)"></td></tr>`).join('')||'<tr><td colspan="5" class="empty">No hay clientes para este día y ruta.</td></tr>';
+ gmcActualizarEstadoOrdenVisitas();
 }
 // GMC VISITAS DEL DÍA: marcas independientes del cliente y de los movimientos contables.
 // Los valores del vendedor se confirman desde Firestore (lectura diaria), no desde localStorage.
@@ -4909,32 +4975,36 @@ function gmcMaestroPuedeEscribir(tipo, accion='guardar'){
  if(tipo==='clientes'&&accion!=='crear'&&!adminAutenticado&&!gmcAdminClienteSecundario)throw Error('Para editar o borrar un cliente, autorice primero al administrador Firebase.');
 }
 // Firebase administra permisos de forma independiente a las comprobaciones del HTML.
-// ORDEN DE VISITA: escritura exclusiva del administrador Firebase y transacción
-// que modifica solamente ordenVisita, conservando la deuda, saldo y datos del cliente.
+// ORDEN DE VISITA: una sola confirmación del administrador para la ruta completa.
+// La transacción comprueba los datos originales y escribe SOLO el campo ordenVisita.
 window.gmcPuedeOrdenarVisitas=()=>!!adminAutenticado&&firebaseRolGMC==='admin'&&!!firebaseAuthGMC.currentUser;
-window.gmcMoverOrdenVisita=async(indice,accion)=>{
+window.gmcGuardarOrdenVisitas=async()=>{
  if(gmcOrdenGuardando)return;
- if(!adminAutenticado||firebaseRolGMC!=='admin'||!firebaseAuthGMC.currentUser)return alert('Solo el administrador Firebase puede ordenar las visitas.');
+ if(!window.gmcPuedeOrdenarVisitas())return alert('Solo el administrador Firebase puede ordenar las visitas.');
  const vendedorId=document.getElementById('gmcOrdenVendedor')?.value;
  const dia=document.getElementById('gmcOrdenDia')?.value;
  const ruta=document.getElementById('gmcOrdenRuta')?.value;
  if(!vendedorId||!dia||!ruta||!gmcMasterListos.clientes||!navigator.onLine)return alert('Seleccione vendedor, día y ruta y espere que Clientes se sincronice con Firestore.');
- const original=gmcOrdenVistaClientes.slice();
- if(!Number.isInteger(indice)||indice<0||indice>=original.length||!['primero','subir','bajar'].includes(accion))return;
- const destino=accion==='primero'?0:accion==='subir'?indice-1:indice+1;
- if(destino<0||destino>=original.length||destino===indice)return;
- if(original.length>400)return alert('La ruta supera 400 clientes; no se realizó el cambio para evitar una transacción demasiado grande.');
- const secuencia=original.slice();
- const [seleccionado]=secuencia.splice(indice,1);
- secuencia.splice(destino,0,seleccionado);
+ const clave=gmcClaveBorradorOrdenVisitas(vendedorId,dia,ruta);
+ const borrador=gmcBorradoresOrdenVisitas.get(clave);
+ const originales=gmcOrdenVistaClientes.slice();
+ if(!borrador||!borrador.modificado)return;
+ if(borrador.desactualizado)return alert('La ruta cambió en Firestore. Actualice el aplicativo y vuelva a asignar el orden.');
+ if(originales.length>400)return alert('La ruta supera 400 clientes; no se realizó el cambio para evitar una transacción demasiado grande.');
+ const verificacion=gmcValidarNumerosOrdenVisitas(originales,borrador);
+ if(!verificacion.valido)return alert(verificacion.mensaje);
+ const secuencia=verificacion.ordenados;
+ if(secuencia.length!==borrador.ids.length||!originales.every(c=>borrador.base.has(String(c.id))))return alert('La lista de clientes cambió. Actualice el aplicativo antes de guardar.');
+ // Captura inmutable de las posiciones para evitar alteraciones durante la transacción.
+ const base=new Map(borrador.base);
  const estado=document.getElementById('gmcOrdenEstado');
  gmcOrdenGuardando=true;
- let resultado='';
- if(estado)estado.textContent='Guardando el nuevo orden de visitas en Firestore…';
  gmcRenderOrdenVisitas();
+ let resultado='';
  try{
+  let escritos=0;
   await runTransaction(firestoreGMC,async tx=>{
-   // Firestore exige ejecutar todas las lecturas antes de las escrituras.
+   // Firestore exige leer todos los documentos antes de escribir alguno.
    const lecturas=[];
    for(const c of secuencia){
     const referencia=doc(firestoreGMC,'clientes',String(c.id));
@@ -4943,19 +5013,28 @@ window.gmcMoverOrdenVisita=async(indice,accion)=>{
    for(const fila of lecturas){
     const remoto=fila.snapshot.data();
     if(!fila.snapshot.exists()||!gmcCoincideVendedorOrden(remoto,vendedorId)||remoto.diaVisita!==dia||String(remoto.ruta||'').trim()!==ruta||
-       Number(remoto.ordenVisita||0)!==Number(fila.local.ordenVisita||0)){
-      throw Error('El orden o la ruta cambió en otro dispositivo. Actualice el listado y vuelva a intentarlo.');
+       Number(remoto.ordenVisita||0)!==base.get(String(fila.local.id))){
+     throw Error('El orden o los datos de la ruta cambiaron en otro dispositivo. Actualice el listado y vuelva a intentarlo.');
     }
    }
+   let cambios=0;
    for(let i=0;i<lecturas.length;i++){
     if(Number(lecturas[i].snapshot.data().ordenVisita||0)!==i+1){
-      tx.update(lecturas[i].referencia,{ordenVisita:i+1});
+     tx.update(lecturas[i].referencia,{ordenVisita:i+1});
+     cambios++;
     }
    }
+   escritos=cambios;
   });
-  resultado='Orden guardado en Cloud Firestore. Los vendedores lo verán al actualizarse Rutas.';
+  // Solo después de la confirmación de Firestore, liberar el borrador local.
+  gmcBorradoresOrdenVisitas.delete(clave);
+  for(let i=0;i<secuencia.length;i++){
+   const local=db.clientes.find(c=>String(c.id)===String(secuencia[i].id));
+   if(local)local.ordenVisita=i+1;
+  }
+  resultado='Orden guardado en Cloud Firestore. '+escritos+' ficha(s) actualizada(s). Los vendedores lo verán en Rutas al sincronizarse.';
  }catch(err){
-  resultado='No se pudo guardar el orden: '+(err?.message||'Error de Firestore');
+  resultado='No se pudo guardar el orden: '+(err?.message||'Error de Firestore')+'. Se conservaron los números ingresados en esta sesión.';
  }finally{
   gmcOrdenGuardando=false;
   gmcRenderOrdenVisitas();
