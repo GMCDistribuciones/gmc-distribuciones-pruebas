@@ -2904,9 +2904,10 @@ function vendedorPuedePrecioDiferenciadoTabaco(producto){
   return !!usuarioActual && !adminAutenticado && /^tabacos?$/i.test(String(producto?.categoria||'').trim());
 }
 function precioDiferenciadoTabacoModal(producto){
-  if(!vendedorPuedePrecioDiferenciadoTabaco(producto))return null;
+  // PV6 solo se selecciona manualmente para TABACO/TABACOS por un vendedor.
+  if(!vendedorPuedePrecioDiferenciadoTabaco(producto)||document.getElementById('vModalPvp')?.value!=='6')return null;
   const campo=document.getElementById('vModalPrecioDiferenciadoTabaco');
-  if(!campo||String(campo.value).trim()==='')return null;
+  if(!campo||String(campo.value).trim()==='')return NaN;
   const precio=Number(campo.value);
   return Number.isFinite(precio)&&precio>0&&Math.abs(precio*100-Math.round(precio*100))<0.000001
     ? Math.round(precio*100)/100 : NaN;
@@ -2958,7 +2959,7 @@ function abrirProductoVenta(id){
   const opciones=Array.from({length:5},(_,i)=>{
     const nivel=i+1,precio=precioProductoPorLista(p,nivel);
     return `<option value="${nivel}" ${nivel===nivelInicial?'selected':''} ${precio<=0?'disabled':''}>PVP${nivel} — ${money(precio)}${precio<=0?' (no configurado)':''}</option>`;
-  }).join('');
+  }).join('')+(vendedorPuedePrecioDiferenciadoTabaco(p)?'<option value="6">PV6 — Precio diferenciado (manual)</option>':'');
   const foto=p.imagen||p.img||'';
   const imagenVisual=foto?`<img src="${esc(foto)}" alt="${esc(p.nombre)}">`:iconoVentaProducto(p.categoria);
   openModal('Agregar producto al pedido',`<div class="venta-modal-producto">
@@ -2969,8 +2970,8 @@ function abrirProductoVenta(id){
         <p class="venta-etiqueta" style="margin:3px 0 12px">Cliente: <b>${esc(ventaClienteNombreActivo)}</b> · Disponible: <b>${disponibles.toFixed(2)}</b></p>
         ${nivelInicial!==ventaPvpActivo?`<p class="note">Este producto no tiene PVP${ventaPvpActivo} configurado; se ha seleccionado PVP${nivelInicial}. Puedes escoger otra lista disponible.</p>`:''}
         <div class="venta-modal-campos">
-          <div class="venta-modal-precio-campo"><label>Precio de venta</label><select id="vModalPvp" onchange="calcularTotalProductoVenta()">${opciones}</select></div>
-          ${vendedorPuedePrecioDiferenciadoTabaco(p)?`<div class="venta-modal-precio-campo"><label>Precio diferenciado (opcional)</label><input id="vModalPrecioDiferenciadoTabaco" type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="Ingrese el precio unitario" oninput="calcularTotalProductoVenta()"><small class="muted">Solo para esta venta. Si queda vacío se utiliza el PVP seleccionado.</small></div>`:''}
+          <div class="venta-modal-precio-campo"><label>Precio de venta</label><select id="vModalPvp" onchange="cambiarPrecioPvpModalVenta()">${opciones}</select></div>
+          ${vendedorPuedePrecioDiferenciadoTabaco(p)?`<div class="venta-modal-precio-campo" id="vModalPrecioPvp6Contenedor" style="display:none"><label>Precio PV6 (manual)</label><input id="vModalPrecioDiferenciadoTabaco" type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="Ingrese el precio unitario PV6" oninput="calcularTotalProductoVenta()"><small class="muted">Obligatorio al elegir PV6. Solo se aplica a este producto en esta venta.</small></div>`:''}
           <div class="venta-modal-cantidad-campo"><label>Cantidad</label><div class="venta-modal-qty"><button type="button" onclick="ajustarCantidadModalVenta(-1)">−</button><input id="vModalCantidad" type="number" min="0.01" step="0.01" value="1" oninput="calcularTotalProductoVenta()"><button type="button" onclick="ajustarCantidadModalVenta(1)">+</button></div></div>
         </div>
         <div class="venta-modal-tot" id="vModalTotal">Total: $0.00</div>
@@ -2979,6 +2980,11 @@ function abrirProductoVenta(id){
     </div>
     <input type="hidden" id="vModalProductoId" value="${esc(p.id)}">
   </div>`);
+  calcularTotalProductoVenta();
+}
+function cambiarPrecioPvpModalVenta(){
+  const contenedor=document.getElementById('vModalPrecioPvp6Contenedor');
+  if(contenedor)contenedor.style.display=document.getElementById('vModalPvp')?.value==='6'?'':'none';
   calcularTotalProductoVenta();
 }
 function ajustarCantidadModalVenta(delta){
@@ -2995,7 +3001,7 @@ function calcularTotalProductoVenta(){
   const precio=diferenciado===null?precioProductoPorLista(p,nivel):diferenciado;
   const cantidad=Number(document.getElementById('vModalCantidad').value)||0;
   const total=cantidad*precio;
-  document.getElementById('vModalTotal').textContent=Number.isFinite(total)?'Total: '+money(total):'Total: precio diferenciado inválido';
+  document.getElementById('vModalTotal').textContent=Number.isFinite(total)?'Total: '+money(total):'Total: ingrese un precio PV6 válido';
 }
 function agregarProductoGraficoVenta(){
   if(ventaClienteActivo===null)return alert('Debe iniciar la venta con un cliente');
@@ -3042,7 +3048,7 @@ function eliminarLineaRapida(i=ventaRapidaSeleccion){
 }
 function renderVentaRapida(){
   const cont=document.getElementById('rvLineas');if(!cont)return;
-  cont.innerHTML=ventaRapidaLineas.map((l,i)=>`<div class="venta-item"><div class="venta-item-info"><strong>${esc(l.nombre)}</strong><small>${l.precioDiferenciado?'Precio diferenciado':'PVP'+(l.pvp||1)} · ${money(l.precio)} c/u · Total ${money(l.total)}${l.descuento?' · Desc. '+money(l.descuento):''}</small></div><div class="venta-item-controles"><button class="venta-qty" onclick="ajustarCantidadVenta(${i},-1)" aria-label="Reducir cantidad">−</button><span class="venta-qty num">${l.cantidad}</span><button class="venta-qty" onclick="ajustarCantidadVenta(${i},1)" aria-label="Aumentar cantidad">+</button><button class="venta-quitar" onclick="eliminarLineaRapida(${i})" aria-label="Quitar del pedido">✕</button></div></div>`).join('')||'<div class="empty">Seleccione productos del catálogo para agregarlos al pedido.</div>';
+  cont.innerHTML=ventaRapidaLineas.map((l,i)=>`<div class="venta-item"><div class="venta-item-info"><strong>${esc(l.nombre)}</strong><small>${l.precioDiferenciado?'PV6 (precio diferenciado)':'PVP'+(l.pvp||1)} · ${money(l.precio)} c/u · Total ${money(l.total)}${l.descuento?' · Desc. '+money(l.descuento):''}</small></div><div class="venta-item-controles"><button class="venta-qty" onclick="ajustarCantidadVenta(${i},-1)" aria-label="Reducir cantidad">−</button><span class="venta-qty num">${l.cantidad}</span><button class="venta-qty" onclick="ajustarCantidadVenta(${i},1)" aria-label="Aumentar cantidad">+</button><button class="venta-quitar" onclick="eliminarLineaRapida(${i})" aria-label="Quitar del pedido">✕</button></div></div>`).join('')||'<div class="empty">Seleccione productos del catálogo para agregarlos al pedido.</div>';
   document.getElementById('rvTotalVenta').textContent=money(ventaRapidaLineas.reduce((a,l)=>a+l.total,0));
   document.getElementById('ventaItemsCantidad').textContent=ventaRapidaLineas.reduce((a,l)=>a+Number(l.cantidad||0),0)+' unidades';
 }
