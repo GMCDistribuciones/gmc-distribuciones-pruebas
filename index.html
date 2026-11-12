@@ -729,7 +729,7 @@
           <div><label>Vendedor / usuario</label><select id="rutasFiltroVendedor" onchange="gmcPaginaRutas25=1;renderRutas()"></select></div>
           <div><label>Número de ruta</label><select id="rutasFiltroNumero" onchange="gmcPaginaRutas25=1;renderRutas()"><option value="">Todas las rutas</option></select></div>
         </div>
-        <div class="toolbar" style="margin:8px 0"><div style="flex:1 1 240px"><label for="gmcBuscarRutas25">Buscar cliente de las rutas visibles</label><input type="search" id="gmcBuscarRutas25" autocomplete="off" placeholder="Nombre, razón social o identificación" oninput="gmcPaginaRutas25=1;renderRutas()"></div></div>
+        <div class="toolbar" style="margin:8px 0"><div style="flex:1 1 240px"><label for="gmcBuscarRutas25">Buscar cliente de las rutas visibles</label><input type="search" id="gmcBuscarRutas25" autocomplete="off" placeholder="Nombre, razón social o identificación" oninput="gmcPaginaRutas25=1;renderRutas()"></div><button type="button" class="btn btn-primary" onclick="gmcImprimirPlanRutasFiltrado()">🖨 Imprimir plan de visitas filtrado (todos los clientes)</button></div>
         <div class="grid g4" style="margin:12px 0">
           <div class="card kpi"><small>Clientes por visitar</small><strong id="rutasCantidadClientes">0</strong></div>
           <div class="card kpi"><small>Clientes con cuentas pendientes</small><strong id="rutasClientesDeudores">0</strong></div>
@@ -2127,6 +2127,25 @@ window.gmcImprimirRutaA4=()=>{
  ventana.document.open();ventana.document.write(docHtml);ventana.document.close();
  ventana.addEventListener('load',()=>ventana.print(),{once:true});
 };
+// Impresión exclusiva del Plan de visitas: usa los datos ya mostrados en Rutas.
+// No consulta ni modifica Firestore y no depende de la página de 25 clientes visible.
+let gmcPlanRutasParaImprimir=null;
+function gmcImprimirPlanRutasFiltrado(){
+ if(document.body.classList.contains('sesion-bloqueada')||!document.getElementById('rutas')?.classList.contains('active')||
+    (!adminAutenticado&&(!usuarioActual||!usuarioActual.modulos?.includes('rutas'))))return alert('Abra Rutas con una sesión autorizada.');
+ const plan=gmcPlanRutasParaImprimir;
+ if(!plan?.filas.length)return alert('No hay clientes para los filtros y la búsqueda seleccionados.');
+ const td=valor=>`<td>${esc(valor??'')}</td>`;
+ const filas=plan.filas.map(f=>`<tr><td class="check">${f.visitado?'&#10003;':'&#9633;'}</td><td class="num">${esc(f.ruta)}</td><td class="num">${esc(f.visita)}</td>${td(f.nombre)}${td(f.razon)}${td(f.identificacion)}${td(f.dia)}${td(f.vendedor)}${td(f.telefono)}${td(f.direccion)}<td class="num">${esc(f.cuentas)}</td><td class="dinero">${money(f.saldo)}</td>${td(f.facturas)}</tr>`).join('');
+ const total=plan.filas.reduce((ac,f)=>ac+f.saldo,0);
+ const vencido=plan.filas.reduce((ac,f)=>ac+f.vencido,0);
+ const subtitulo=`Día: ${plan.dia||'Todos'} · Vendedor: ${plan.vendedor||'Todos'} · Ruta: ${plan.ruta||'Todas'} · Clientes: ${plan.filas.length}`;
+ const busqueda=plan.busqueda?`<p><b>Búsqueda:</b> ${esc(plan.busqueda)}</p>`:'';
+ const html=`<!doctype html><html lang="es"><head><meta charset="utf-8"><title>GMC - Plan de visitas filtrado</title><style>
+ @page{size:A4 landscape;margin:9mm}*{box-sizing:border-box}body{font:8pt Arial,sans-serif;color:#172033;margin:0}h1{font-size:15pt;color:#0b3d73;margin:0 0 3mm}p{margin:0 0 2.5mm}.resumen{margin:3mm 0 4mm;font-weight:bold}table{width:100%;border-collapse:collapse;table-layout:fixed}thead{display:table-header-group}tr{break-inside:avoid;page-break-inside:avoid}th,td{border:1px solid #c4ceda;padding:1.5mm 1mm;font-size:7pt;vertical-align:top;overflow-wrap:anywhere;word-break:break-word}th{background:#eaf3ff}th:nth-child(1){width:4%}th:nth-child(2){width:4%}th:nth-child(3){width:4%}th:nth-child(4){width:11%}th:nth-child(5){width:11%}th:nth-child(6){width:9%}th:nth-child(7){width:6%}th:nth-child(8){width:8%}th:nth-child(9){width:8%}th:nth-child(10){width:13%}th:nth-child(11){width:5%}th:nth-child(12){width:7%}th:nth-child(13){width:10%}.num,.check{text-align:center}.check{font-size:12pt}.dinero{text-align:right;white-space:nowrap}footer{font-size:7pt;margin-top:4mm}
+ </style></head><body><h1>GMC DISTRIBUCIONES — Rutas · Plan de visitas</h1><p>${esc(subtitulo)}</p>${busqueda}<p class="resumen">Cuentas por cobrar: ${money(total)} · Cartera vencida: ${money(vencido)}</p><table><thead><tr><th>Visitado</th><th>Ruta</th><th>Visita</th><th>Nombre</th><th>Razón social</th><th>Identificación</th><th>Día</th><th>Vendedor</th><th>Teléfono</th><th>Dirección</th><th>Cuentas pendientes</th><th>Saldo por cobrar</th><th>Detalle de facturas</th></tr></thead><tbody>${filas}</tbody></table><footer>Plan de visitas según los filtros mostrados en Rutas. Impresión de consulta: no registra visitas ni modifica datos.</footer></body></html>`;
+ imprimirDocumentoNativo(html);
+}
 // Rutas: consulta sin escrituras contables. Los vendedores ven solo sus clientes asignados.
 function renderRutas(){
   const diaSel=document.getElementById('rutasFiltroDia');
@@ -2239,9 +2258,13 @@ function renderRutas(){
     const yaVisitado=visitaEstado.marcados.has(String(c.id))&&estadoCorrecto;
     const deshabilitado=!visitasConfirmadas||window.gmcVisitaEscribiendo?.has(today()+'|'+c.id);
     const casilla=esUsuarioRuta?`<input type="checkbox" aria-label="Marcar visitado: ${esc(c.nombreCliente||c.razonSocial||c.nombre||'cliente')}" data-cliente-id="${esc(String(c.id))}" ${yaVisitado?'checked':''} ${deshabilitado?'disabled':''} onchange="gmcMarcarVisitaRuta(this.dataset.clienteId,this.checked)" style="width:20px;height:20px;cursor:pointer">`:'—';
-    return {cliente:c,html:`<tr><td style="text-align:center">${casilla}</td><td>${esc(c.ruta||'—')}</td><td><strong>${numeroVisita}</strong></td><td>${esc(c.nombreCliente??(c.razonSocial?'':c.nombre||''))}${venderDesdeRuta}</td><td>${esc(c.razonSocial||'')}</td><td>${esc(c.identificacion||'')}</td><td>${esc(c.diaVisita||'—')}</td><td>${esc(vendedor)}</td><td>${esc(c.telefono||'')}</td><td>${esc(c.direccion||'')}</td><td>${creditos.length}</td><td><strong class="${saldo>0?'danger':''}">${money(saldo)}</strong></td><td>${detalle}</td></tr>`};
+    const impresion={ruta:c.ruta||'—',visita:numeroVisita,nombre:c.nombreCliente??(c.razonSocial?'':c.nombre||''),razon:c.razonSocial||'',identificacion:c.identificacion||'',dia:c.diaVisita||'—',vendedor,telefono:c.telefono||'',direccion:c.direccion||'',cuentas:creditos.length,saldo,vencido,visitado:visitasConfirmadas&&yaVisitado,facturas:creditos.map(v=>String(v.numero||'S/N')+' ('+money(saldoCredito(v))+')').join('; ')||'—'};
+    return {cliente:c,impresion,html:`<tr><td style="text-align:center">${casilla}</td><td>${esc(c.ruta||'—')}</td><td><strong>${numeroVisita}</strong></td><td>${esc(c.nombreCliente??(c.razonSocial?'':c.nombre||''))}${venderDesdeRuta}</td><td>${esc(c.razonSocial||'')}</td><td>${esc(c.identificacion||'')}</td><td>${esc(c.diaVisita||'—')}</td><td>${esc(vendedor)}</td><td>${esc(c.telefono||'')}</td><td>${esc(c.direccion||'')}</td><td>${creditos.length}</td><td><strong class="${saldo>0?'danger':''}">${money(saldo)}</strong></td><td>${detalle}</td></tr>`};
   });
-  const filasFiltradas25=filasRutas25.filter(f=>gmcCoincideCliente25(f.cliente,document.getElementById('gmcBuscarRutas25')?.value||''));
+  const busquedaRutas=document.getElementById('gmcBuscarRutas25')?.value||'';
+  const filasFiltradas25=filasRutas25.filter(f=>gmcCoincideCliente25(f.cliente,busquedaRutas));
+  // Guardar en memoria todas las filas que cumplen los filtros, no solo la página visible.
+  gmcPlanRutasParaImprimir={dia:diaElegido,vendedor:vendedorSel.selectedOptions?.[0]?.textContent||'',ruta:filtroRuta,busqueda:busquedaRutas,filas:filasFiltradas25.map(f=>f.impresion)};
   const paginaRutas25=gmcPagina25(filasFiltradas25,gmcPaginaRutas25);
   gmcPaginaRutas25=paginaRutas25.pagina;
   tabla.innerHTML=paginaRutas25.items.map(f=>f.html).join('')||'<tr><td colspan="13" class="empty">No hay clientes para estos filtros o búsqueda.</td></tr>';
