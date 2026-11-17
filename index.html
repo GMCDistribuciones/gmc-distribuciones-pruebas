@@ -2136,7 +2136,7 @@ function gmcImprimirPlanRutasFiltrado(){
  const plan=gmcPlanRutasParaImprimir;
  if(!plan?.filas.length)return alert('No hay clientes para los filtros y la búsqueda seleccionados.');
  const td=valor=>`<td>${esc(valor??'')}</td>`;
- const filas=plan.filas.map(f=>`<tr><td class="check">${f.visitado?'&#10003;':'&#9633;'}</td>${td(f.nombre)}${td(f.razon)}${td(f.direccion)}<td class="num">${esc(f.cuentas)}</td><td class="dinero">${money(f.saldo)}</td></tr>`).join('');
+ const filas=plan.filas.map(f=>`<tr><td class="check">${f.visitado?'&#10003;':'&#9633;'}</td>${td(f.nombre)}${td(f.razon)}${td(f.identificacion)}${td(f.telefono)}${td(f.direccion)}<td class="num">${esc(f.cuentas)}</td><td class="dinero">${money(f.saldo)}</td></tr>`).join('');
  const total=plan.filas.reduce((ac,f)=>ac+f.saldo,0);
  const vencido=plan.filas.reduce((ac,f)=>ac+f.vencido,0);
  // Si el selector muestra «Todas», indicar las rutas efectivamente incluidas en la impresión.
@@ -2145,8 +2145,8 @@ function gmcImprimirPlanRutasFiltrado(){
  const subtitulo=`Día: ${plan.dia||'Todos'} · Vendedor: ${plan.vendedor||'Todos'} · Ruta: ${rutaCabecera} · Clientes: ${plan.filas.length}`;
  const busqueda=plan.busqueda?`<p><b>Búsqueda:</b> ${esc(plan.busqueda)}</p>`:'';
  const html=`<!doctype html><html lang="es"><head><meta charset="utf-8"><title>GMC - Plan de visitas filtrado</title><style>
- @page{size:A4 portrait;margin:8mm}*{box-sizing:border-box}body{font:8pt Arial,sans-serif;color:#172033;margin:0}h1{font-size:14pt;color:#0b3d73;margin:0 0 2.5mm}p{margin:0 0 2mm}.resumen{margin:2.5mm 0 3mm;font-weight:bold}table{width:100%;border-collapse:collapse;table-layout:fixed}thead{display:table-header-group}tr{break-inside:avoid;page-break-inside:avoid}th,td{border:1px solid #c4ceda;padding:1.3mm .8mm;font-size:7pt;vertical-align:top;overflow-wrap:anywhere;word-break:break-word}th{background:#eaf3ff}th:nth-child(1){width:10%;white-space:nowrap;word-break:normal;overflow-wrap:normal}th:nth-child(2){width:22%}th:nth-child(3){width:20%}th:nth-child(4){width:25%}th:nth-child(5){width:10%}th:nth-child(6){width:13%}.num,.check{text-align:center}.check{font-size:12pt}.dinero{text-align:right;overflow-wrap:anywhere}footer{font-size:7pt;margin-top:4mm}
- </style></head><body><h1>GMC DISTRIBUCIONES — Rutas · Plan de visitas</h1><p>${esc(subtitulo)}</p>${busqueda}<p class="resumen">Cuentas por cobrar: ${money(total)} · Cartera vencida: ${money(vencido)}</p><table><thead><tr><th>Visitado</th><th>Nombre</th><th>Razón social</th><th>Dirección</th><th>Cuentas pendientes</th><th>Saldo por cobrar</th></tr></thead><tbody>${filas}</tbody></table><footer>Plan de visitas según los filtros mostrados en Rutas. Impresión de consulta: no registra visitas ni modifica datos.</footer></body></html>`;
+ @page{size:A4 landscape;margin:9mm}*{box-sizing:border-box}body{font:8pt Arial,sans-serif;color:#172033;margin:0}h1{font-size:15pt;color:#0b3d73;margin:0 0 3mm}p{margin:0 0 2.5mm}.resumen{margin:3mm 0 4mm;font-weight:bold}table{width:100%;border-collapse:collapse;table-layout:fixed}thead{display:table-header-group}tr{break-inside:avoid;page-break-inside:avoid}th,td{border:1px solid #c4ceda;padding:1.5mm 1mm;font-size:7pt;vertical-align:top;overflow-wrap:anywhere;word-break:break-word}th{background:#eaf3ff}th:nth-child(1){width:8%;white-space:nowrap;word-break:normal;overflow-wrap:normal}th:nth-child(2){width:17%}th:nth-child(3){width:16%}th:nth-child(4){width:13%}th:nth-child(5){width:12%}th:nth-child(6){width:19%}th:nth-child(7){width:7%}th:nth-child(8){width:8%}.num,.check{text-align:center}.check{font-size:12pt}.dinero{text-align:right;white-space:nowrap}footer{font-size:7pt;margin-top:4mm}
+ </style></head><body><h1>GMC DISTRIBUCIONES — Rutas · Plan de visitas</h1><p>${esc(subtitulo)}</p>${busqueda}<p class="resumen">Cuentas por cobrar: ${money(total)} · Cartera vencida: ${money(vencido)}</p><table><thead><tr><th>Visitado</th><th>Nombre</th><th>Razón social</th><th>Identificación</th><th>Teléfono</th><th>Dirección</th><th>Cuentas pendientes</th><th>Saldo por cobrar</th></tr></thead><tbody>${filas}</tbody></table><footer>Plan de visitas según los filtros mostrados en Rutas. Impresión de consulta: no registra visitas ni modifica datos.</footer></body></html>`;
  imprimirDocumentoNativo(html);
 }
 // Rutas: consulta sin escrituras contables. Los vendedores ven solo sus clientes asignados.
@@ -5865,7 +5865,7 @@ function gmcMostrarCierrePendiente(){
  for(const id of ['gmcCierrePendienteAdmin','gmcCierrePendienteVendedor']){
   const n=document.getElementById(id);if(!n)continue;
   n.style.display=pendiente?'':'none';
-  n.innerHTML=pendiente?'<strong>⚠️ Cierre pendiente de comprobación: '+esc(pendiente.fecha)+' · '+esc(pendiente.usuario)+'. No intente crear un segundo cierre.</strong><div class="actions" style="margin-top:8px"><button class="btn btn-primary" onclick="gmcDiagnosticarCierreFirebase()">Diagnosticar permisos (solo lectura)</button><button class="btn btn-warning" onclick="gmcReintentarCierreFirebase()">Comprobar y reintentar el mismo cierre</button><button class="btn btn-light" onclick="gmcDescartarCierreFirebase()">Descartar solo si no existe en Firestore</button></div>':'';
+  n.innerHTML=pendiente?'<strong>⚠️ Cierre pendiente de comprobación: '+esc(pendiente.fecha)+' · '+esc(pendiente.usuario)+'. No intente crear un segundo cierre.</strong><div class="actions" style="margin-top:8px"><button class="btn btn-primary" onclick="gmcDiagnosticarCierreFirebase()">Diagnosticar permisos (solo lectura)</button>'+((pendiente.fecha<today())?'<button class="btn btn-primary" onclick="gmcAuditarCierreHistoricoFirebase()">Auditar recuperación anterior (solo lectura)</button>':'')+'<button class="btn btn-warning" onclick="gmcReintentarCierreFirebase()">Comprobar y reintentar el mismo cierre</button><button class="btn btn-light" onclick="gmcDescartarCierreFirebase()">Descartar solo si no existe en Firestore</button></div>':'';
  }
 }
 function gmcDetenerCierresFirebase(){
@@ -6064,7 +6064,7 @@ function gmcResumenParaCerrar(fecha,usuario,usuarioId,tipo){
  return copia;
 }
 // CIERRE PERSONAL PROGRESIVO GMC: cada asignacion se devuelve una sola vez.
-// Conserva el cierre original de hasta 8 asignaciones y su ID historico.
+// El cierre personal de 1-2 asignaciones conserva su transaccion original; desde 3 se usa el proceso progresivo con el mismo ID.
 const gmcRutaProcesoCierre=(id)=>doc(firestoreGMC,'procesosCierre',id);
 function gmcResumenStockDevueltoEtapas(retornos){
  return Object.entries(retornos||{}).filter(([,cantidad])=>Number(cantidad)>0).map(([productoId,cantidad])=>({
@@ -6083,7 +6083,7 @@ async function gmcCierreProgresivoFirebase(pendiente){
   if(pendiente.fecha!==today())throw Error('El cierre pendiente corresponde a otra fecha y no tiene un proceso iniciado en Firestore. Requiere revision administrativa; no se altero el inventario.');
   const lista=await getDocsFromServer(query(collection(firestoreGMC,'stockUsuarios'),where('usuarioId','==',auth.uid)));
   const abiertas=lista.docs.filter(d=>d.data().estado==='abierta');
-  if(abiertas.length<=8)throw Error('El numero de asignaciones cambio. Compruebe el cierre pendiente y consulte al administrador antes de reintentarlo.');
+  if(abiertas.length<=2)throw Error('El número de asignaciones cambió a 2 o menos. Compruebe el cierre pendiente antes de reintentarlo; no se modificó el inventario.');
   if(abiertas.length>300)throw Error('Hay mas de 300 documentos abiertos. Se requiere un procedimiento especial antes de realizar devoluciones.');
   const ids=abiertas.map(d=>d.id).sort();
   // Confirmar que todos los documentos del servidor esten disponibles y sin IDs repetidos.
@@ -6186,7 +6186,7 @@ async function gmcEjecutarCierreFirestore(pendiente){
   const cierre=pendiente.cierre,refCierre=doc(firestoreGMC,'cierresCaja',cierre.id);
   const procesoGuardado=cierre.tipo==='personal'?await getDocFromServer(gmcRutaProcesoCierre(cierre.id)):null;
   const usaEtapas=cierre.tipo==='personal'&&(procesoGuardado?.exists() ||
-   (db.stockUsuarios||[]).filter(a=>a.estado==='abierta'&&a.usuarioId===cierre.usuarioId).length>8);
+   (db.stockUsuarios||[]).filter(a=>a.estado==='abierta'&&a.usuarioId===cierre.usuarioId).length>2);
   const resultado=usaEtapas
    ? await gmcCierreProgresivoFirebase(pendiente)
    : await runTransaction(firestoreGMC,async tx=>{
@@ -6206,6 +6206,7 @@ async function gmcEjecutarCierreFirestore(pendiente){
    }
    // Cierre personal/individual: solo documentos del usuario con asignación abierta.
    const stock=cierre.tipo==='general'?[]:(db.stockUsuarios||[]).filter(a=>a.estado==='abierta'&&a.usuarioId===cierre.usuarioId);
+   if(cierre.tipo==='personal'&&stock.length>2)throw Error('El cierre personal con 3 o más asignaciones debe utilizar el procedimiento progresivo; no se alteró el inventario.');
    if(stock.length>8)throw Error('Para más de 8 asignaciones, el vendedor debe confirmar su cierre personal con el procedimiento progresivo desde su sesión; no se alteró el inventario.');
    const asignaciones=[];
    for(const a of stock)asignaciones.push({id:a.id,ref:doc(firestoreGMC,'stockUsuarios',a.id),snap:await tx.get(doc(firestoreGMC,'stockUsuarios',a.id))});
@@ -6393,6 +6394,140 @@ window.gmcDescargarDiagnosticoCierre=()=>{
  const blob=new Blob([window.gmcUltimoDiagnosticoCierre],{type:'application/json;charset=utf-8'});
  const url=URL.createObjectURL(blob),link=document.createElement('a');
  link.href=url;link.download='DIAGNOSTICO_CIERRE_GMC_ETAPA7.json';document.body.appendChild(link);link.click();link.remove();
+ setTimeout(()=>URL.revokeObjectURL(url),1000);
+};
+
+// Recuperación histórica, fase 1: auditoría de SOLO LECTURA.
+// No inicia procesos, no reintenta cierres y no modifica inventario, caja ni localStorage.
+window.gmcAuditarCierreHistoricoFirebase=async()=>{
+ const pendiente=gmcPendienteCierre(),auth=firebaseAuthGMC.currentUser;
+ if(!pendiente||!auth||pendiente.operadorId!==auth.uid||pendiente.cierre?.usuarioId!==auth.uid)
+  return alert('Ingrese como el vendedor propietario del cierre pendiente para auditarlo.');
+ if(pendiente.fecha>=today())return alert('Esta auditoría está reservada para un cierre de una fecha anterior.');
+ if(!navigator.onLine||!gmcCierresListos||!gmcVentasListas||!gmcGastosListos||!gmcAsignacionesListas||!gmcMasterListos.productos||!gmcMasterListos.clientes)
+  return alert('Espere a que Cierres, Ventas, Gastos, Asignaciones, Productos y Clientes estén confirmados por Firestore. No se hizo ninguna escritura.');
+ const cierre=pendiente.cierre,uidActual=auth.uid;
+ const informe={tipo:'GMC_AUDITORIA_RECUPERACION_CIERRE_HISTORICO',version:1,soloLectura:true,
+  fechaRevision:new Date().toISOString(),fechaServidorNoVerificada:true,
+  fechaPendiente:pendiente.fecha,idCierre:cierre.id,usuarioId:uidActual,
+  cierrePendiente:{tipo:cierre.tipo,fecha:cierre.fecha,ventas:cierre.ventas,numVentas:cierre.numVentas,
+   efectivoEsperado:cierre.efectivoEsperado,gastosOperativos:cierre.gastosOperativos,
+   transferencias:cierre.transferencias,abonosCredito:cierre.abonosCredito,
+   chequesRecibidos:cierre.chequesRecibidos},
+  documentos:{},movimientosPosteriores:{},comparacionContable:[],asignaciones:[],productos:[],alertas:[],
+  conclusion:'REQUIERE REVISIÓN HUMANA; este informe no autoriza escrituras retroactivas.'};
+ const alerta=(texto)=>informe.alertas.push(texto);
+ try{
+  if(cierre.id!==uidActual+'_'+pendiente.fecha||cierre.fecha!==pendiente.fecha||cierre.tipo!=='personal')
+   throw Error('El identificador, la fecha o el tipo del cierre pendiente son incompatibles con su sesión.');
+  // Estas cuatro consultas se ejecutan en el servidor; no sirven resultados de la caché.
+  const [cierreSnap,generalSnap,procesoSnap,asigSnap]=await Promise.all([
+   getDocFromServer(doc(firestoreGMC,'cierresCaja',cierre.id)),
+   getDocFromServer(doc(firestoreGMC,'cierresCaja','general_'+pendiente.fecha)),
+   getDocFromServer(gmcRutaProcesoCierre(cierre.id)),
+   getDocsFromServer(query(collection(firestoreGMC,'stockUsuarios'),where('usuarioId','==',uidActual)))
+  ]);
+  informe.documentos.cierrePropio={existe:cierreSnap.exists(),estado:cierreSnap.exists()?cierreSnap.data().tipo:null};
+  informe.documentos.cierreGeneral={existe:generalSnap.exists()};
+  informe.documentos.proceso={existe:procesoSnap.exists()};
+  if(procesoSnap.exists()){
+   const pr=procesoSnap.data();
+   informe.documentos.proceso={existe:true,estado:pr.estado,fecha:pr.fecha,usuarioId:pr.usuarioId,
+    totalAsignaciones:Array.isArray(pr.asignacionesIds)?pr.asignacionesIds.length:null,
+    procesadas:Array.isArray(pr.procesados)?pr.procesados.length:null,
+    identificadoresProcesados:Array.isArray(pr.procesados)?pr.procesados:[],
+    identificadoresAsignados:Array.isArray(pr.asignacionesIds)?pr.asignacionesIds:[]};
+  }
+  if(cierreSnap.exists())alerta('El cierre histórico YA existe en Firestore. No se debe crear ni devolver inventario nuevamente.');
+  if(generalSnap.exists())alerta('Ya existe un cierre general de la fecha histórica. Cualquier regularización exige conciliación administrativa.');
+  if(procesoSnap.exists())alerta('Existe un proceso histórico en Firestore. Hay que revisar su avance y continuar exclusivamente ese ID si procede.');
+  const asignaciones=asigSnap.docs.map(x=>({id:x.id,...x.data()}));
+  const posteriores=asignaciones.filter(a=>String(a.fecha||'')>pendiente.fecha);
+  const sinFecha=asignaciones.filter(a=>!a.fecha);
+  const previas=asignaciones.filter(a=>String(a.fecha||'')<=pendiente.fecha && !!a.fecha);
+  informe.asignaciones=asignaciones.map(a=>({id:a.id,fecha:a.fecha||null,productoId:a.productoId||null,
+   estado:a.estado||null,cantidad:a.cantidad,restante:a.restante,
+   ultimoCierreId:a.ultimoCierreId||null,fechaCierre:a.fechaCierre||null,ultimaVentaId:a.ultimaVentaId||null}));
+  if(posteriores.length)alerta('Existen '+posteriores.length+' asignaciones con fecha posterior al cierre pendiente. No se debe devolver indiscriminadamente el stock actual.');
+  if(sinFecha.length)alerta('Existen '+sinFecha.length+' asignaciones sin fecha verificable.');
+  const cierreRelacionado=previas.filter(a=>a.ultimoCierreId===cierre.id);
+  if(cierreRelacionado.length)alerta('Existen asignaciones ya vinculadas al ID del cierre histórico ('+cierreRelacionado.length+'). No repetir devoluciones.');
+  const abiertasPrevias=previas.filter(a=>a.estado==='abierta');
+  const sumaPorProducto={};
+  for(const a of abiertasPrevias){
+   const n=Number(a.restante),total=Number(a.cantidad);
+   if(!a.productoId||!Number.isFinite(n)||!Number.isFinite(total)||n<0||n>total+0.000001)
+    alerta('Inconsistencia en una asignación abierta anterior: '+a.id+'.');
+   if(a.productoId&&Number.isFinite(n)&&n>0)sumaPorProducto[a.productoId]=(sumaPorProducto[a.productoId]||0)+n;
+  }
+  const idsProducto=Object.keys(sumaPorProducto);
+  // Límite deliberado para evitar una auditoría que dispare la cuota de lecturas.
+  if(idsProducto.length>30)alerta('Hay '+idsProducto.length+' productos por verificar. Esta auditoría limita las lecturas a 30 y NO debe autorizar una recuperación.');
+  for(const pid of idsProducto.slice(0,30)){
+   const sp=await getDocFromServer(doc(firestoreGMC,'productos',pid));
+   if(!sp.exists()){
+    informe.productos.push({id:pid,existe:false,retornoHipotetico:sumaPorProducto[pid]});
+    alerta('Falta en Firestore el producto '+pid+'.');
+    continue;
+   }
+   const d=sp.data(),stock=Number(d.stock),asignado=Number(d.unidadesAsignadas||0),resto=sumaPorProducto[pid];
+   informe.productos.push({id:pid,existe:true,stock,unidadesAsignadas:asignado,
+    retornoHipotetico:resto,permiteConciliacionBasica:Number.isFinite(stock)&&Number.isFinite(asignado)&&asignado+0.000001>=resto,
+    ultimoCierreId:d.ultimoCierreId||null,ultimoCierreAsignacionId:d.ultimoCierreAsignacionId||null});
+   if(!Number.isFinite(stock)||!Number.isFinite(asignado)||asignado+0.000001<resto)
+    alerta('El stock asignado actual del producto '+pid+' no alcanza para cubrir el retorno hipotético.');
+  }
+  // Los siguientes arreglos provienen de las suscripciones YA CONFIRMADAS por Firestore.
+  const ventasUsuario=(db.ventas||[]).filter(v=>String(v.usuarioVentaId)===uidActual);
+  const ventasPosteriores=ventasUsuario.filter(v=>String(v.fecha||'')>pendiente.fecha);
+  const ventasDia=ventasUsuario.filter(v=>v.fecha===pendiente.fecha&&v.ventaAdminAtribuida!==true);
+  const abonosPosteriores=ventasUsuario.flatMap(v=>Array.isArray(v.abonosPosteriores)?v.abonosPosteriores:[])
+   .filter(a=>String(a.fecha||'')>pendiente.fecha);
+  const abonosApertura=(db.clientes||[]).flatMap(c=>Array.isArray(c.carteraApertura?.abonos)?c.carteraApertura.abonos:[])
+   .filter(a=>String(a.usuarioId||'')===uidActual&&String(a.fecha||'')>pendiente.fecha);
+  const gastosPosteriores=(db.gastosOperativosUsuarios||[])
+   .filter(g=>g.usuarioId===uidActual&&String(g.fecha||'')>pendiente.fecha);
+  const cierresPosteriores=(db.cierres||[]).filter(c=>c.usuarioId===uidActual&&String(c.fecha||'')>pendiente.fecha);
+  informe.movimientosPosteriores={ventas:ventasPosteriores.map(v=>({id:v.id,fecha:v.fecha,total:v.total})),
+   abonosCredito:abonosPosteriores.length,abonosDeudasAnteriores:abonosApertura.length,
+   gastosOperativos:gastosPosteriores.length,
+   cierres: cierresPosteriores.map(c=>({id:c.id,fecha:c.fecha,tipo:c.tipo})),
+   asignacionesNuevas:posteriores.length,asignacionesSinFecha:sinFecha.length,
+   ventasDeLaFechaPendiente:ventasDia.length};
+  if(ventasPosteriores.length||abonosPosteriores.length||abonosApertura.length||gastosPosteriores.length||cierresPosteriores.length)
+   alerta('Hay movimientos o cierres posteriores a la fecha pendiente; se requiere conciliación cronológica antes de recuperar.');
+  // La comparación es informativa: una diferencia NO modifica el resumen original guardado.
+  const actual=resumenCierreUsuario(pendiente.fecha,cierre.usuario,cierre.usuarioId);
+  for(const campo of ['ventas','numVentas','efectivoEsperado','gastosOperativos','transferencias','abonosCredito','chequesRecibidos']){
+   const guardado=Number(cierre[campo]||0),recalculado=Number(actual[campo]||0),igual=Math.abs(guardado-recalculado)<0.001;
+   informe.comparacionContable.push({campo,guardado,recalculado,coincide:igual});
+   if(!igual)alerta('El resumen del '+campo+' cambió respecto del pendiente histórico.');
+  }
+  if(!previas.length)alerta('No se encontraron asignaciones fechadas hasta el día del cierre pendiente.');
+  informe.resumen={totalAsignaciones:asignaciones.length,asignacionesHastaFecha:previas.length,
+   asignacionesAbiertasHastaFecha:abiertasPrevias.length,unidadesAbiertasHistoricasActuales:abiertasPrevias.reduce((n,a)=>n+Number(a.restante||0),0),
+   productosConsultados:informe.productos.length};
+  informe.conclusion=informe.alertas.length
+   ? 'BLOQUEO PREVENTIVO: revisar las alertas y conciliar antes de cualquier recuperación. NO se hizo ninguna escritura.'
+   : 'SIN ALERTAS AUTOMÁTICAS: todavía se requiere comparar este informe con el diagnóstico original del 16 y autorizar manualmente un procedimiento excepcional. NO se hizo ninguna escritura.';
+ }catch(error){
+  alerta('Auditoría incompleta: '+(error.message||String(error)));
+  informe.conclusion='AUDITORÍA INCOMPLETA: NO realizar recuperación.';
+ }
+ window.gmcUltimaAuditoriaCierreHistorico=JSON.stringify(informe,null,2);
+ openModal('Auditoría del cierre histórico · SOLO LECTURA',
+  '<p class="note"><strong>No recupera ni devuelve inventario.</strong> Consulte las alertas y descargue el JSON para comparar con el diagnóstico original del día 16. Este informe contiene identificadores internos: compártalo solo por un canal de confianza.</p>'+
+  '<p><strong>'+esc(informe.conclusion)+'</strong></p>'+
+  '<p>Alertas: '+informe.alertas.length+' · Asignaciones: '+(informe.resumen?.totalAsignaciones??'sin confirmar')+'</p>'+
+  '<div class="actions"><button class="btn btn-primary" onclick="gmcDescargarAuditoriaCierreHistorico()">Descargar auditoría actual JSON</button></div>'+
+  '<textarea readonly style="margin-top:12px;min-height:260px;white-space:pre;font-family:monospace;font-size:12px">'+esc(window.gmcUltimaAuditoriaCierreHistorico)+'</textarea>');
+};
+window.gmcDescargarAuditoriaCierreHistorico=()=>{
+ if(!window.gmcUltimaAuditoriaCierreHistorico)return;
+ const blob=new Blob([window.gmcUltimaAuditoriaCierreHistorico],{type:'application/json;charset=utf-8'});
+ const url=URL.createObjectURL(blob),a=document.createElement('a');
+ a.href=url;a.download='AUDITORIA_ACTUAL_CIERRE_HISTORICO_GMC.json';
+ document.body.appendChild(a);a.click();a.remove();
  setTimeout(()=>URL.revokeObjectURL(url),1000);
 };
 
