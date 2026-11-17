@@ -901,6 +901,15 @@
     <section id="miCierre" class="section">
       <p class="note" id="gmcCierresEstadoVendedor">Conectando cierres de caja con Firestore…</p>
       <div class="note" id="gmcCierrePendienteVendedor" style="display:none;margin:8px 0"></div>
+      <!-- Auditoría histórica independiente del aviso local. Solo consulta Firestore; no crea cierres. -->
+      <div class="note" style="margin:8px 0" id="gmcAuditoriaCierreSinPendiente">
+        <strong>Consultar un cierre histórico (solo lectura)</strong>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:end;margin-top:8px">
+          <div style="max-width:190px"><label for="gmcFechaCierreHistorico">Fecha del cierre a revisar</label><input id="gmcFechaCierreHistorico" type="date" value="2026-11-16"></div>
+          <button type="button" class="btn btn-light" onclick="gmcAuditarCierreHistoricoFirebase()">Auditar fecha en Firestore</button>
+        </div>
+        <small>Funciona aunque el aviso de cierre pendiente ya no aparezca. No cambia ventas, caja, asignaciones ni existencias.</small>
+      </div>
       <div class="card">
         <h3>🔒 Mi cierre de caja · Hoy</h3>
         <p class="note">El cierre pertenece exclusivamente al usuario conectado y utiliza la fecha actual de Ecuador. Registra tus ventas y abonos, y devuelve al inventario central las existencias que te quedaron sin vender. Los gastos operativos de Etapa 8 se sincronizan con Firestore.</p>
@@ -6400,23 +6409,37 @@ window.gmcDescargarDiagnosticoCierre=()=>{
 // Recuperación histórica, fase 1: auditoría de SOLO LECTURA.
 // No inicia procesos, no reintenta cierres y no modifica inventario, caja ni localStorage.
 window.gmcAuditarCierreHistoricoFirebase=async()=>{
- const pendiente=gmcPendienteCierre(),auth=firebaseAuthGMC.currentUser;
- if(!pendiente||!auth||pendiente.operadorId!==auth.uid||pendiente.cierre?.usuarioId!==auth.uid)
-  return alert('Ingrese como el vendedor propietario del cierre pendiente para auditarlo.');
- if(pendiente.fecha>=today())return alert('Esta auditoría está reservada para un cierre de una fecha anterior.');
+ const auth=firebaseAuthGMC.currentUser;
+ if(!auth||firebaseRolGMC!=='vendedor'||!usuarioActual||!usuarioActual.modulos?.includes('ventas'))
+  return alert('Ingrese con la cuenta del vendedor autorizado para consultar su cierre histórico.');
+ const local=gmcPendienteCierre();
+ // Si se perdió el aviso en localStorage, consultar exclusivamente por la fecha elegida.
+ // No se reconstruye ni guarda una orden de cierre a partir de datos incompletos.
+ const fechaConsultada=String(document.getElementById('gmcFechaCierreHistorico')?.value||'').trim();
+ if(!local&&!/^\d{4}-\d{2}-\d{2}$/.test(fechaConsultada))
+  return alert('Seleccione la fecha del cierre histórico que desea auditar.');
+ const pendiente=local||{operadorId:auth.uid,fecha:fechaConsultada,usuario:usuarioActual.usuario,
+  cierre:{id:auth.uid+'_'+fechaConsultada,fecha:fechaConsultada,usuarioId:auth.uid,
+   usuario:usuarioActual.usuario,tipo:'personal'}};
+ if(pendiente.operadorId!==auth.uid||pendiente.cierre?.usuarioId!==auth.uid)
+  return alert('El cierre pendiente local pertenece a otra cuenta de vendedor.');
+ if(pendiente.fecha>=today())return alert('Esta auditoría está reservada para una fecha anterior.');
  if(!navigator.onLine||!gmcCierresListos||!gmcVentasListas||!gmcGastosListos||!gmcAsignacionesListas||!gmcMasterListos.productos||!gmcMasterListos.clientes)
   return alert('Espere a que Cierres, Ventas, Gastos, Asignaciones, Productos y Clientes estén confirmados por Firestore. No se hizo ninguna escritura.');
  const cierre=pendiente.cierre,uidActual=auth.uid;
  const informe={tipo:'GMC_AUDITORIA_RECUPERACION_CIERRE_HISTORICO',version:1,soloLectura:true,
   fechaRevision:new Date().toISOString(),fechaServidorNoVerificada:true,
   fechaPendiente:pendiente.fecha,idCierre:cierre.id,usuarioId:uidActual,
-  cierrePendiente:{tipo:cierre.tipo,fecha:cierre.fecha,ventas:cierre.ventas,numVentas:cierre.numVentas,
+  referenciaOriginalDisponible:!!local,
+  origenReferencia:local?'pendiente_local':'fecha_elegida_sin_pendiente_local',
+  cierrePendiente:local?{tipo:cierre.tipo,fecha:cierre.fecha,ventas:cierre.ventas,numVentas:cierre.numVentas,
    efectivoEsperado:cierre.efectivoEsperado,gastosOperativos:cierre.gastosOperativos,
    transferencias:cierre.transferencias,abonosCredito:cierre.abonosCredito,
-   chequesRecibidos:cierre.chequesRecibidos},
+   chequesRecibidos:cierre.chequesRecibidos}:null,
   documentos:{},movimientosPosteriores:{},comparacionContable:[],asignaciones:[],productos:[],alertas:[],
   conclusion:'REQUIERE REVISIÓN HUMANA; este informe no autoriza escrituras retroactivas.'};
  const alerta=(texto)=>informe.alertas.push(texto);
+ if(!local)alerta('No existe una copia local verificable del resumen original del cierre. Este informe solo audita el estado actual; se debe contrastar con el diagnóstico del 16/11/2026 antes de cualquier recuperación.');
  try{
   if(cierre.id!==uidActual+'_'+pendiente.fecha||cierre.fecha!==pendiente.fecha||cierre.tipo!=='personal')
    throw Error('El identificador, la fecha o el tipo del cierre pendiente son incompatibles con su sesión.');
@@ -6498,7 +6521,10 @@ window.gmcAuditarCierreHistoricoFirebase=async()=>{
    alerta('Hay movimientos o cierres posteriores a la fecha pendiente; se requiere conciliación cronológica antes de recuperar.');
   // La comparación es informativa: una diferencia NO modifica el resumen original guardado.
   const actual=resumenCierreUsuario(pendiente.fecha,cierre.usuario,cierre.usuarioId);
-  for(const campo of ['ventas','numVentas','efectivoEsperado','gastosOperativos','transferencias','abonosCredito','chequesRecibidos']){
+  const camposContables=['ventas','numVentas','efectivoEsperado','gastosOperativos','transferencias','abonosCredito','chequesRecibidos'];
+  informe.resumenContableActual=Object.fromEntries(camposContables.map(campo=>[campo,Number(actual[campo]||0)]));
+  // Sin el pendiente local no hay valores originales fiables contra los que comparar.
+  if(local)for(const campo of camposContables){
    const guardado=Number(cierre[campo]||0),recalculado=Number(actual[campo]||0),igual=Math.abs(guardado-recalculado)<0.001;
    informe.comparacionContable.push({campo,guardado,recalculado,coincide:igual});
    if(!igual)alerta('El resumen del '+campo+' cambió respecto del pendiente histórico.');
