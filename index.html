@@ -259,6 +259,20 @@
   /* Exclusivamente presentación de egresos y abonos en cierres de caja. */
   .cierre-egreso{color:#c93434!important;font-weight:700}
   .cierre-abono{color:#0f5aa8!important;font-weight:700}
+  /* NUEVO MÓDULO DEL VENDEDOR: tabla de ventas de hoy, sin filtros. Sin cambios a módulos previos. */
+  .gmc-hoy-tabla{min-width:610px;width:100%;border-collapse:collapse;font-size:13px}
+  .gmc-hoy-tabla thead th{background:#f3f7fc;color:#344054;border-bottom:1px solid #d6dde8}
+  .gmc-hoy-tabla tbody tr.gmc-hoy-primera td{border-top:2px solid #dce4ee}
+  .gmc-hoy-tabla td{padding:10px 9px;vertical-align:top}
+  .gmc-hoy-cliente{font-weight:800;color:#0b3d73}
+  .gmc-hoy-numeracion{display:block;margin-top:5px;color:#667085;font-size:11px;font-weight:400}
+  .gmc-hoy-total{font-weight:800;white-space:nowrap;color:#172033}
+  .gmc-hoy-cantidad{text-align:center;white-space:nowrap}
+  .gmc-hoy-factura{white-space:nowrap}
+  .gmc-hoy-factura .btn{font-size:12px;padding:7px 9px}
+  .gmc-hoy-modal-fila{display:flex;justify-content:space-between;align-items:center;gap:14px;border-bottom:1px solid #edf0f5;padding:8px 0}
+  .gmc-hoy-modal-fila:last-child{border-bottom:0}
+  @media(max-width:620px){.gmc-hoy-tabla{font-size:12px}.gmc-hoy-tabla td{padding:8px 7px}}
   @media print{.sidebar,.topbar .actions,.no-print{display:none!important}.app{display:block}main{padding:0}.section{display:none!important}.section.active{display:block!important}.card{box-shadow:none;border:1px solid #ddd}}
 </style>
 </head>
@@ -915,6 +929,20 @@
         <button id="btnImprimirMiCierre" class="btn btn-light" style="margin-top:12px;display:none" onclick="imprimirCierre(this.dataset.cierreId)">🖨 Imprimir mi cierre</button>
       </div>
     </section>
+    <!-- Solo lectura. Ventas de HOY del usuario conectado; sin filtros ni marcas de visita. -->
+    <section id="gmcMovimientosCliente" class="section">
+      <div class="card">
+        <h3>🧾 Mis ventas de hoy</h3>
+        <p id="gmcMovEstado" class="muted" style="font-size:12px" aria-live="polite">Esperando la sincronización de ventas con Firestore…</p>
+        <div class="table-wrap" style="margin-top:12px">
+          <table class="gmc-hoy-tabla">
+            <thead><tr><th>Cliente</th><th>Producto</th><th style="text-align:center">Cantidad</th><th>Precio unitario</th><th>Total cobrado</th><th>Factura</th></tr></thead>
+            <tbody id="gmcMovTabla"><tr><td colspan="6" class="empty">Ingrese con su cuenta de vendedor.</td></tr></tbody>
+          </table>
+        </div>
+        <p class="muted" style="font-size:12px;margin-top:10px">Se muestran únicamente las ventas registradas hoy por este vendedor. En ventas a crédito, «Total cobrado» corresponde a los abonos de hoy asociados a esa factura. Los cheques recibidos no implican necesariamente acreditación bancaria.</p>
+      </div>
+    </section>
     <section id="misCreditos" class="section">
       <div class="card">
         <h3>💳 Mis créditos y deudas anteriores pendientes</h3>
@@ -1031,7 +1059,7 @@ function cargarUsuarios(){try{const a=JSON.parse(localStorage.getItem(USERS_KEY)
 function almacenarUsuarios(a){localStorage.setItem(USERS_KEY,JSON.stringify(a));renderUsuarios()}
 function permisosDeUsuario(){return usuarioActual?.modulos||[]}
 function puedeEntrarModulo(id){return id!=='dashboard'&&(!usuarioActual||permisosDeUsuario().includes(id))}
-function actualizarSesionUI(){const b=document.getElementById('usuarioSesionBtn');if(b)b.textContent=usuarioActual?'👤 '+usuarioActual.usuario+' · Salir':'👤 Ingresar usuario';const nav=document.getElementById('misModulosNav');if(nav)nav.style.display=usuarioActual?'':'none';const navAdmin=document.getElementById('navAdministrador');if(navAdmin)navAdmin.style.display=usuarioActual&&!adminAutenticado?'none':'';const panel=document.getElementById('modulosUsuario');if(panel)panel.innerHTML=usuarioActual?usuarioActual.modulos.filter(id=>PERMISOS_MODULOS.includes(id)).map(id=>`<div class="card quick" onclick="go('${id}')">${esc(NOMBRES_PERMISOS[id]||id)}</div>`).join('')+`<div class="card quick" onclick="go('miCierre')">🔒 Mi cierre de caja</div><div class="card quick" onclick="go('misCreditos')">💳 Mis créditos pendientes</div>${usuarioActual.modulos.some(p=>p==='ventas'||p==='clientes')?`<div class="card quick" onclick="go('rutas')">🗺️ Rutas</div>`:''}${usuarioActual.modulos.includes('ventas')?`<div class="card quick" onclick="go('misGastosOperativos')">💸 Mis gastos operativos</div>`:''}`:''}
+function actualizarSesionUI(){const b=document.getElementById('usuarioSesionBtn');if(b)b.textContent=usuarioActual?'👤 '+usuarioActual.usuario+' · Salir':'👤 Ingresar usuario';const nav=document.getElementById('misModulosNav');if(nav)nav.style.display=usuarioActual?'':'none';const navAdmin=document.getElementById('navAdministrador');if(navAdmin)navAdmin.style.display=usuarioActual&&!adminAutenticado?'none':'';const panel=document.getElementById('modulosUsuario');if(panel)panel.innerHTML=usuarioActual?usuarioActual.modulos.filter(id=>PERMISOS_MODULOS.includes(id)).map(id=>`<div class="card quick" onclick="go('${id}')">${esc(NOMBRES_PERMISOS[id]||id)}</div>`).join('')+`<div class="card quick" onclick="go('miCierre')">🔒 Mi cierre de caja</div>${usuarioActual.modulos.some(p=>p==='ventas'||p==='clientes')?'<div class="card quick" data-seccion="gmcMovimientosCliente" onclick="go(this.dataset.seccion)">🧾 Mis ventas de hoy</div>':''}<div class="card quick" onclick="go('misCreditos')">💳 Mis créditos pendientes</div>${usuarioActual.modulos.some(p=>p==='ventas'||p==='clientes')?`<div class="card quick" onclick="go('rutas')">🗺️ Rutas</div>`:''}${usuarioActual.modulos.includes('ventas')?`<div class="card quick" onclick="go('misGastosOperativos')">💸 Mis gastos operativos</div>`:''}`:''}
 function accionSesionUsuario(){if(usuarioActual||adminAutenticado){bloquearAplicativo()}else abrirLoginUsuario()}
 function abrirLoginUsuario(){openModal('Ingreso de usuario al Control de Negocio y Gestión integral GMC DISTRIBUCIONES',`<p class="note">Ingrese sus credenciales asignadas por el administrador.</p><div class="row"><div class="c6"><label>Usuario</label><input id="loginUsuario" autocomplete="username"></div><div class="c6"><label>Contraseña</label><input id="loginClave" type="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')verificarLoginUsuario()"></div></div><button class="btn btn-primary" style="margin-top:12px" onclick="verificarLoginUsuario()">Ingresar</button> <button class="btn btn-light" style="margin-top:12px" onclick="abrirAccesoAdmin()">Ingresar como administrador</button>`);document.getElementById('loginUsuario').focus()}
 async function verificarLoginUsuario(){const nombre=loginUsuario.value.trim(),clave=loginClave.value;const u=cargarUsuarios().find(x=>x.usuario.toLocaleLowerCase('es')===nombre.toLocaleLowerCase('es')&&x.activo);if(!u||await hashClaveAdmin(clave,u.sal)!==u.hash)return alert('Usuario o contraseña incorrectos, o usuario inactivo');usuarioActual={id:u.id,usuario:u.usuario,modulos:[...u.modulos]};adminAutenticado=false;document.body.classList.remove('sesion-bloqueada');cerrarModal();actualizarSesionUI();go('misModulos')}
@@ -1166,15 +1194,16 @@ function go(id){
     if(usuarioActual&&id!=='dashboard'&&id!=='administrador'&&id!=='usuarios'&&id!=='respaldoConfig'&&puedeEntrarModulo(id)){}
     else {abrirAccesoAdmin(id);return}
   }
-  if(['miCierre','misCreditos','misGastosOperativos'].includes(id)&&!usuarioActual){alert('Ingrese con su cuenta de usuario para acceder a este módulo');return;}
+  if(['miCierre','misCreditos','misGastosOperativos','gmcMovimientosCliente'].includes(id)&&!usuarioActual){alert('Ingrese con su cuenta de usuario para acceder a este módulo');return;}
   if(id==='misGastosOperativos'&&(!usuarioActual||!usuarioActual.modulos.includes('ventas')))return alert('Su usuario no tiene permiso de ventas para registrar gastos operativos');
-  if(usuarioActual&&!adminAutenticado&&!['misModulos','administrador','miCierre','misCreditos','misGastosOperativos'].includes(id)&&!puedeEntrarModulo(id)&&!rutasAutorizadas){alert('Su usuario no tiene permiso para este módulo');return}
+  if(id==='gmcMovimientosCliente'&&(adminAutenticado||!usuarioActual||!(usuarioActual.modulos||[]).some(p=>p==='ventas'||p==='clientes')))return alert('Consulta exclusiva del vendedor autorizado.');
+  if(usuarioActual&&!adminAutenticado&&!['misModulos','administrador','miCierre','misCreditos','misGastosOperativos','gmcMovimientosCliente'].includes(id)&&!puedeEntrarModulo(id)&&!rutasAutorizadas){alert('Su usuario no tiene permiso para este módulo');return}
   if(!usuarioActual&&!adminAutenticado&&cargarUsuarios().length&&['ventas','clientes','rutas'].includes(id)){abrirLoginUsuario();return}
   const seccion=document.getElementById(id);if(!seccion)return;
   document.querySelectorAll('.section').forEach(x=>x.classList.remove('active'));
   seccion.classList.add('active');
   document.querySelectorAll('.nav-btn').forEach(b=>b.classList.toggle('active',b.dataset.sec===id||!!(id in TITULOS_ADMIN&&b.dataset.sec==='administrador')));
-  document.getElementById('pageTitle').textContent=(id==='misModulos'?'👤 Mis módulos':id==='miCierre'?'🔒 Mi cierre de caja':id==='misCreditos'?'💳 Mis créditos pendientes':id==='misGastosOperativos'?'💸 Mis gastos operativos':TITULOS_ADMIN[id])||document.querySelector(`[data-sec="${id}"]`)?.textContent.trim()||'Control Negocio';
+  document.getElementById('pageTitle').textContent=(id==='misModulos'?'👤 Mis módulos':id==='miCierre'?'🔒 Mi cierre de caja':id==='misCreditos'?'💳 Mis créditos pendientes':id==='gmcMovimientosCliente'?'🧾 Mis ventas de hoy':id==='misGastosOperativos'?'💸 Mis gastos operativos':TITULOS_ADMIN[id])||document.querySelector(`[data-sec="${id}"]`)?.textContent.trim()||'Control Negocio';
   renderAll();
 }
 document.querySelectorAll('.nav-btn').forEach(b=>b.onclick=()=>go(b.dataset.sec));
@@ -2104,6 +2133,7 @@ let gmcVisitaEscribiendo=new Set();
 window.gmcRecibirVisitasDia=(fecha,usuarioId,ids,listo)=>{
  gmcVisitasDiaEstado={fecha,usuarioId,listo:!!listo,marcados:new Set(ids||[])};
  renderRutas();
+ renderGmcMovimientosCliente();
 };
 window.gmcLimpiarVisitasDia=()=>{gmcVisitasDiaEstado={fecha:'',usuarioId:'',listo:false,marcados:new Set()};};
 window.gmcImprimirRutaA4=()=>{
@@ -4540,7 +4570,87 @@ function renderMetasCumplimiento(){
   }).join('')||'<tr><td colspan="10" class="empty">Todavía no se han creado metas de ventas.</td></tr>';
 }
 
-function renderAll(){renderCajaBancos();renderGestionCheques();renderProductos();renderRutas();renderCarteraPendiente('cp');renderInventario();renderStockUsuarios();renderPersonas();renderVentas();renderCompras();renderConfig();renderGastos();renderAnalisis();renderMetasCumplimiento();renderCierres();renderMiCierre();renderMisCreditos();renderMisGastosOperativos();prepararVentaRapida();renderAlertaCarteraVentas();renderUsuarios();actualizarSesionUI()}
+// CONSULTA PERSONAL DE HOY: solo lectura; usa ventas ya sincronizadas por Firebase.
+// No modifica las ventas, abonos, clientes, inventario ni cierres.
+function gmcMovPropia(v){return !!usuarioActual&&!adminAutenticado&&creditoPerteneceUsuario(v)}
+function gmcMovCobradoHoy(v,fecha){
+ if(esDevuelta(v.id))return 0;
+ let total=0;
+ if(v.formaPago==='credito'){
+  total=Number(resumenAbonosVentaCredito(v).inicial||0);
+  for(const abono of (Array.isArray(v.abonosPosteriores)?v.abonosPosteriores:[])){
+   if(String(abono.fecha||'')!==fecha||String(abono.usuarioId||'')!==String(usuarioActual?.id||''))continue;
+   total+=Number(abono.valor||0);
+  }
+ }else if(['efectivo','transferencia','mixto','cheque'].includes(v.formaPago)){
+  total=Number(v.total||0);
+ }
+ return Math.round(Math.max(0,total)*100)/100;
+}
+function renderGmcMovimientosCliente(){
+ const seccion=document.getElementById('gmcMovimientosCliente');
+ if(!seccion?.classList.contains('active'))return;
+ const tabla=document.getElementById('gmcMovTabla'),estado=document.getElementById('gmcMovEstado');
+ if(!tabla||!estado)return;
+ if(!usuarioActual||adminAutenticado||!(usuarioActual.modulos||[]).some(p=>p==='ventas'||p==='clientes')||document.body.classList.contains('sesion-bloqueada')){
+  tabla.innerHTML='<tr><td colspan="6" class="empty">Ingrese con su cuenta de vendedor.</td></tr>';
+  estado.textContent='Consulta exclusiva del vendedor conectado.';return;
+ }
+ // Evita mostrar el día en blanco como si no existieran ventas mientras Firestore no confirme.
+ const estadoVentas=document.getElementById('gmcVentasEstado')?.textContent||'';
+ if(!estadoVentas.includes('conectados a Firestore')){
+  tabla.innerHTML='<tr><td colspan="6" class="empty">Esperando ventas confirmadas de Firestore…</td></tr>';
+  estado.textContent='Esperando sincronización confirmada. Una consulta incompleta no indica ausencia de ventas.';return;
+ }
+ const fecha=today();
+ const ventas=(db.ventas||[]).filter(v=>gmcMovPropia(v)&&String(v.fecha||'')===fecha)
+  .sort((a,b)=>String(a.numero||a.id).localeCompare(String(b.numero||b.id),'es',{numeric:true}));
+ estado.textContent='Fecha: '+fecha+' · Solo ventas de hoy del usuario conectado · '+ventas.length+' factura(s).';
+ const filas=[];
+ for(const v of ventas){
+  const detalles=Array.isArray(v.lineas)&&v.lineas.length?v.lineas:[{nombre:'Detalle de productos no disponible',cantidad:'—'}];
+  const cobrado=gmcMovCobradoHoy(v,fecha),devuelta=esDevuelta(v.id);
+  const cliente=esc(v.tercero||'Cliente sin nombre');
+  const referencia=esc(v.numero||'S/N');
+  detalles.forEach((l,i)=>{
+   const primera=i===0;
+   filas.push('<tr'+(primera?' class="gmc-hoy-primera"':'')+'>');
+   if(primera)filas.push('<td rowspan="'+detalles.length+'"><span class="gmc-hoy-cliente">'+cliente+'</span><small class="gmc-hoy-numeracion">Factura '+referencia+(devuelta?' · DEVUELTA':'')+'</small></td>');
+   filas.push('<td>'+esc(l.nombre||'Producto')+'</td><td class="gmc-hoy-cantidad">'+esc(l.cantidad??'—')+'</td><td style="white-space:nowrap">'+(l.precio==null||l.precio===''?'—':money(l.precio))+'</td>');
+   if(primera){
+    filas.push('<td rowspan="'+detalles.length+'" class="gmc-hoy-total">'+money(cobrado)+'</td>');
+    filas.push('<td rowspan="'+detalles.length+'" class="gmc-hoy-factura"><button type="button" class="btn btn-light" data-factura="'+esc(v.id)+'" onclick="gmcMovAbrirFactura(this.dataset.factura)">👁 Ver factura</button></td>');
+   }
+   filas.push('</tr>');
+  });
+ }
+ tabla.innerHTML=filas.join('')||'<tr><td colspan="6" class="empty">No tienes ventas registradas hoy.</td></tr>';
+}
+function gmcMovAbrirFactura(id){
+ if(!usuarioActual||adminAutenticado||!(usuarioActual.modulos||[]).some(p=>p==='ventas'||p==='clientes')||document.body.classList.contains('sesion-bloqueada'))return;
+ const v=(db.ventas||[]).find(x=>String(x.id)===String(id)&&gmcMovPropia(x)&&String(x.fecha||'')===today());
+ if(!v)return alert('Esta factura no corresponde a tus ventas de hoy o ya no está disponible.');
+ const lineas=(Array.isArray(v.lineas)?v.lineas:[]).map(l=>'<tr><td>'+esc(l.nombre||'Producto')+'</td><td>'+esc(l.cantidad)+'</td><td>'+money(l.precio)+'</td><td>'+money(l.descuento||0)+'</td><td><b>'+money(l.total)+'</b></td></tr>').join('');
+ const credito=v.formaPago==='credito'?resumenAbonosVentaCredito(v):null;
+ const cobradoTotal=credito?credito.total:['efectivo','transferencia','mixto','cheque'].includes(v.formaPago)?Number(v.total||0):Number(v.abono||0);
+ const saldo=credito?credito.saldo:saldoCredito(v);
+ const devuelta=esDevuelta(v.id);
+ openModal('Detalle completo de factura · '+(v.numero||'S/N'),
+  '<p><b>Factura:</b> '+esc(v.numero||'S/N')+' · <b>Fecha:</b> '+esc(v.fecha||'—')+
+  '<br><b>Cliente:</b> '+esc(v.tercero||'Cliente')+' · <b>Estado:</b> '+(devuelta?'Devuelta':'Registrada')+
+  '<br><b>Forma de cobro:</b> '+esc(detalleFormaCobro(v))+'</p>'+
+  '<div class="table-wrap"><table><thead><tr><th>Producto</th><th>Cantidad</th><th>Precio</th><th>Desc.</th><th>Total</th></tr></thead><tbody>'+
+  (lineas||'<tr><td colspan="5">No hay detalle de productos disponible.</td></tr>')+'</tbody></table></div>'+
+  '<div class="gmc-hoy-modal-fila"><span>Total factura</span><b>'+money(v.total)+'</b></div>'+
+  '<div class="gmc-hoy-modal-fila"><span>Cobrado hoy por mí</span><b>'+money(gmcMovCobradoHoy(v,today()))+'</b></div>'+
+  '<div class="gmc-hoy-modal-fila"><span>Total cobrado registrado en la factura</span><b>'+money(cobradoTotal)+'</b></div>'+
+  '<div class="gmc-hoy-modal-fila"><span>Saldo pendiente</span><b>'+money(saldo)+'</b></div>'+
+  (devuelta?'<p class="note">Factura devuelta: el detalle histórico permanece disponible, pero el cobro vigente se presenta como cero.</p>':'')+
+  (v.comentario?'<p><b>Comentario:</b> '+esc(v.comentario)+'</p>':'')+
+  (v.formaPago==='credito'?historialAbonosCreditoHtml(v):'')+
+  '<div class="actions" style="justify-content:flex-end;margin-top:12px"><button type="button" class="btn btn-light" onclick="cerrarModal()">Cerrar</button></div>');
+}
+function renderAll(){renderGmcMovimientosCliente();renderCajaBancos();renderGestionCheques();renderProductos();renderRutas();renderCarteraPendiente('cp');renderInventario();renderStockUsuarios();renderPersonas();renderVentas();renderCompras();renderConfig();renderGastos();renderAnalisis();renderMetasCumplimiento();renderCierres();renderMiCierre();renderMisCreditos();renderMisGastosOperativos();prepararVentaRapida();renderAlertaCarteraVentas();renderUsuarios();actualizarSesionUI()}
 [dashDesde,vDesde,gDesde].forEach(x=>x.value=today().slice(0,8)+'01');[dashHasta,vHasta,gHasta].forEach(x=>x.value=today());cFecha.value=fechaSistemaCierre();
 renderAll();
 // En la etapa 2, el acceso queda bloqueado hasta autenticar en Firebase.
