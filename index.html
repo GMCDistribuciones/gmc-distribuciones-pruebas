@@ -1210,8 +1210,11 @@ function go(id){
   seccion.classList.add('active');
   document.querySelectorAll('.nav-btn').forEach(b=>b.classList.toggle('active',b.dataset.sec===id||!!(id in TITULOS_ADMIN&&b.dataset.sec==='administrador')));
   document.getElementById('pageTitle').textContent=(id==='misModulos'?'👤 Mis módulos':id==='miCierre'?'🔒 Mi cierre de caja':id==='misCreditos'?'💳 Mis créditos pendientes':id==='gmcMovimientosCliente'?'🧾 Mis ventas de hoy':id==='misGastosOperativos'?'💸 Mis gastos operativos':TITULOS_ADMIN[id])||document.querySelector(`[data-sec="${id}"]`)?.textContent.trim()||'Control Negocio';
+  // Optimización Firestore: cargar consultas administrativas solo al entrar en su módulo.
+  window.gmcOptimizarConsultaModulo?.(id);
   renderAll();
 }
+
 document.querySelectorAll('.nav-btn').forEach(b=>b.onclick=()=>go(b.dataset.sec));
 function openModal(title,html){devolverFormularioAsignacionLote();document.getElementById('modalTitle').textContent=title;document.getElementById('modalBody').innerHTML=html;document.getElementById('modal').classList.add('show')}
 function cerrarModal(){if(document.body.classList.contains('sesion-bloqueada'))return;window.gmcSalirAutorizacionClienteFirebase?.();devolverFormularioAsignacionLote();edicionAdministradorIdentificada=false;solicitudClientePendiente=null;autorizacionClienteEdicion='';document.getElementById('modal').classList.remove('show')}
@@ -5081,7 +5084,39 @@ const gmcMaestroEstado=(tipo,texto)=>{
  const nodo=document.getElementById(tipo==='productos'?'gmcProductosEstado':'gmcClientesEstado');
  if(nodo)nodo.textContent=texto;
 };
+// GMC: optimización de lecturas. No cambia transacciones, datos ni reglas.
+// Las colecciones necesarias para vender y cerrar siguen sincronizándose en tiempo real.
+// Las colecciones administrativas de consulta eventual se abren una sola vez por sesión,
+// al entrar en un módulo que realmente las necesita (no se vuelven a descargar al navegar).
+const gmcConsultasAdminIniciadas=new Set();
+function gmcActivarConsultasSegunModulo(modulo){
+ if(firebaseRolGMC!=='admin'||!adminAutenticado||!gmcMasterSesion||
+    firebaseAuthGMC.currentUser?.uid!==gmcMasterSesion||
+    document.body.classList.contains('sesion-bloqueada'))return;
+ const planes={
+  proveedores:['proveedores'],
+  compras:['proveedores','compras'],
+  metasCumplimiento:['metas'],
+  cajaBancos:['bancos'],
+  gastos:['bancos'],
+  gestionCheques:['bancos'],
+  analisis:['compras','bancos']
+ };
+ const inicio={
+  proveedores:gmcSuscribirProveedoresFirebase,
+  compras:gmcSuscribirComprasFirebase,
+  metas:gmcSuscribirMetasFirebase,
+  bancos:gmcSuscribirCajaBancosFirebase
+ };
+ for(const tipo of planes[modulo]||[]){
+  if(gmcConsultasAdminIniciadas.has(tipo))continue;
+  gmcConsultasAdminIniciadas.add(tipo);
+  inicio[tipo](gmcMasterSesion);
+ }
+}
+window.gmcOptimizarConsultaModulo=gmcActivarConsultasSegunModulo;
 function gmcDetenerMaestrosFirebase(){
+ gmcConsultasAdminIniciadas.clear();
  gmcPararVisitas();
  gmcDetenerConfiguracionEtapa13();
  gmcDetenerComprasFirebase();
@@ -5110,10 +5145,8 @@ function gmcSuscribirMaestrosFirebase(uidSesion){
  gmcMasterSesion=uidSesion;
  gmcSuscribirVisitasDelDia();
  gmcSuscribirConfiguracionEtapa13(uidSesion);
- gmcSuscribirProveedoresFirebase(uidSesion);
- gmcSuscribirComprasFirebase(uidSesion);
- gmcSuscribirMetasFirebase(uidSesion);
- gmcSuscribirCajaBancosFirebase(uidSesion);
+ // Proveedores, compras, metas y bancos se consultan al entrar en sus módulos.
+ // Las operaciones críticas mantienen sus escuchadores existentes en tiempo real.
  gmcSuscribirAsignacionesFirebase(uidSesion);
  gmcSuscribirVentasFirebase(uidSesion);
  gmcSuscribirCierresFirebase(uidSesion);
@@ -5121,7 +5154,12 @@ function gmcSuscribirMaestrosFirebase(uidSesion){
  for(const tipo of ['productos','clientes']){
   db[tipo]=[];
   gmcMaestroEstado(tipo,'Conectando con Firestore…');
-  const dejar=onSnapshot(collection(firestoreGMC,tipo),{includeMetadataChanges:true},snap=>{
+  // El vendedor solo necesita las fichas de sus clientes asignados;
+  // el administrador conserva el catálogo completo para búsquedas y rutas.
+  const origen=(tipo==='clientes'&&firebaseRolGMC==='vendedor')
+    ?query(collection(firestoreGMC,'clientes'),where('vendedorId','==',uidSesion))
+    :collection(firestoreGMC,tipo);
+  const dejar=onSnapshot(origen,{includeMetadataChanges:true},snap=>{
     if(gmcMasterSesion!==uidSesion||firebaseAuthGMC.currentUser?.uid!==uidSesion)return;
     db[tipo]=snap.docs.map(d=>({ ...d.data(), id:d.id }));
     gmcMasterListos[tipo]=!snap.metadata.fromCache;
@@ -5143,6 +5181,9 @@ function gmcSuscribirMaestrosFirebase(uidSesion){
   });
   gmcMasterUnsubs.push(dejar);
  }
+ // La navegación del login ocurre antes de iniciar las suscripciones.
+ // Activar el módulo ya seleccionado una vez que la sesión está preparada.
+ gmcActivarConsultasSegunModulo(document.querySelector('.section.active')?.id||'');
  renderAll();
 }
 function gmcMaestroPuedeEscribir(tipo, accion='guardar'){
