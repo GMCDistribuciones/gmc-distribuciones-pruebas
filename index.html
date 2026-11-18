@@ -6074,6 +6074,7 @@ function gmcResumenParaCerrar(fecha,usuario,usuarioId,tipo){
 }
 // CIERRE PERSONAL PROGRESIVO GMC: cada asignacion se devuelve una sola vez.
 // El cierre personal de 1-2 asignaciones conserva su transaccion original; desde 3 se usa el proceso progresivo con el mismo ID.
+const GMC_CIERRE_PROGRESIVO_DESDE=3;
 const gmcRutaProcesoCierre=(id)=>doc(firestoreGMC,'procesosCierre',id);
 function gmcResumenStockDevueltoEtapas(retornos){
  return Object.entries(retornos||{}).filter(([,cantidad])=>Number(cantidad)>0).map(([productoId,cantidad])=>({
@@ -6092,7 +6093,7 @@ async function gmcCierreProgresivoFirebase(pendiente){
   if(pendiente.fecha!==today())throw Error('El cierre pendiente corresponde a otra fecha y no tiene un proceso iniciado en Firestore. Requiere revision administrativa; no se altero el inventario.');
   const lista=await getDocsFromServer(query(collection(firestoreGMC,'stockUsuarios'),where('usuarioId','==',auth.uid)));
   const abiertas=lista.docs.filter(d=>d.data().estado==='abierta');
-  if(abiertas.length<=2)throw Error('El número de asignaciones cambió a 2 o menos. Compruebe el cierre pendiente antes de reintentarlo; no se modificó el inventario.');
+  if(abiertas.length<GMC_CIERRE_PROGRESIVO_DESDE)throw Error('El número de asignaciones cambió a menos de '+GMC_CIERRE_PROGRESIVO_DESDE+'. Compruebe el cierre pendiente antes de reintentarlo; no se modificó el inventario.');
   if(abiertas.length>300)throw Error('Hay mas de 300 documentos abiertos. Se requiere un procedimiento especial antes de realizar devoluciones.');
   const ids=abiertas.map(d=>d.id).sort();
   // Confirmar que todos los documentos del servidor esten disponibles y sin IDs repetidos.
@@ -6195,7 +6196,7 @@ async function gmcEjecutarCierreFirestore(pendiente){
   const cierre=pendiente.cierre,refCierre=doc(firestoreGMC,'cierresCaja',cierre.id);
   const procesoGuardado=cierre.tipo==='personal'?await getDocFromServer(gmcRutaProcesoCierre(cierre.id)):null;
   const usaEtapas=cierre.tipo==='personal'&&(procesoGuardado?.exists() ||
-   (db.stockUsuarios||[]).filter(a=>a.estado==='abierta'&&a.usuarioId===cierre.usuarioId).length>2);
+   (db.stockUsuarios||[]).filter(a=>a.estado==='abierta'&&a.usuarioId===cierre.usuarioId).length>=GMC_CIERRE_PROGRESIVO_DESDE);
   const resultado=usaEtapas
    ? await gmcCierreProgresivoFirebase(pendiente)
    : await runTransaction(firestoreGMC,async tx=>{
@@ -6215,8 +6216,8 @@ async function gmcEjecutarCierreFirestore(pendiente){
    }
    // Cierre personal/individual: solo documentos del usuario con asignación abierta.
    const stock=cierre.tipo==='general'?[]:(db.stockUsuarios||[]).filter(a=>a.estado==='abierta'&&a.usuarioId===cierre.usuarioId);
-   if(cierre.tipo==='personal'&&stock.length>2)throw Error('El cierre personal con 3 o más asignaciones debe utilizar el procedimiento progresivo; no se alteró el inventario.');
-   if(stock.length>8)throw Error('Para más de 8 asignaciones, el vendedor debe confirmar su cierre personal con el procedimiento progresivo desde su sesión; no se alteró el inventario.');
+   if(cierre.tipo==='personal'&&stock.length>=GMC_CIERRE_PROGRESIVO_DESDE)throw Error('El cierre personal con '+GMC_CIERRE_PROGRESIVO_DESDE+' o más asignaciones debe utilizar el procedimiento progresivo; no se alteró el inventario.');
+   if(cierre.tipo==='individual'&&stock.length>8)throw Error('Este cierre individual administrativo supera el límite de 8 asignaciones de su procedimiento existente. El vendedor debe realizar su cierre personal progresivo desde su propia sesión; no se alteró el inventario.');
    const asignaciones=[];
    for(const a of stock)asignaciones.push({id:a.id,ref:doc(firestoreGMC,'stockUsuarios',a.id),snap:await tx.get(doc(firestoreGMC,'stockUsuarios',a.id))});
    const productoIds=[...new Set(asignaciones.filter(a=>a.snap.exists()&&Number(a.snap.data().restante)>0).map(a=>a.snap.data().productoId))];
