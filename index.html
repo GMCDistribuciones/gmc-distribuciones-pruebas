@@ -259,6 +259,10 @@
   /* Exclusivamente presentación de egresos y abonos en cierres de caja. */
   .cierre-egreso{color:#c93434!important;font-weight:700}
   .cierre-abono{color:#0f5aa8!important;font-weight:700}
+  /* Rutas: presentación exclusivamente en pantalla. Conserva datos internos, filtros y reporte impreso. */
+  @media screen {
+    #rutas > .card > .table-wrap > table > :is(thead, tbody) > tr > :is(:nth-child(2), :nth-child(3), :nth-child(7), :nth-child(8), :nth-child(9)) { display:none; }
+  }
   /* NUEVO MÓDULO DEL VENDEDOR: tabla de ventas de hoy, sin filtros. Sin cambios a módulos previos. */
   .gmc-hoy-tabla{min-width:610px;width:100%;border-collapse:collapse;font-size:13px}
   .gmc-hoy-tabla thead th{background:#f3f7fc;color:#344054;border-bottom:1px solid #d6dde8}
@@ -2162,7 +2166,7 @@ window.gmcImprimirRutaA4=()=>{
 let gmcPlanRutasParaImprimir=null;
 function gmcImprimirPlanRutasFiltrado(){
  if(document.body.classList.contains('sesion-bloqueada')||!document.getElementById('rutas')?.classList.contains('active')||
-    (!adminAutenticado&&(!usuarioActual||!usuarioActual.modulos?.includes('rutas'))))return alert('Abra Rutas con una sesión autorizada.');
+    (!adminAutenticado&&(!usuarioActual||!(usuarioActual.modulos||[]).some(p=>p==='ventas'||p==='clientes'))))return alert('Abra Rutas con una sesión autorizada.');
  const plan=gmcPlanRutasParaImprimir;
  if(!plan?.filas.length)return alert('No hay clientes para los filtros y la búsqueda seleccionados.');
  const td=valor=>`<td>${esc(valor??'')}</td>`;
