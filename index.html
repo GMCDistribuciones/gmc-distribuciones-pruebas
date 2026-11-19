@@ -3555,6 +3555,15 @@ function bancoTransferenciasDisponibles(){
    const abonoClave='abono:'+v.id+':'+i;
    if(bancoCentavos(importeAbono)>0&&!usadas.has(abonoClave))lista.push({id:abonoClave,fecha:p.fecha||v.fecha||'',valor:bancoCentavos(importeAbono)/100,descripcion:'Abono '+(v.numero||'S/N')+' · '+(v.tercero||'Cliente')+' · '+(i+1)});
   });
+  }
+ // Las recuperaciones de cartera anterior no son ventas; sí originan
+ // transferencias que deben poder depositarse una sola vez en Caja Bancos.
+ for(const c of db.clientes||[]){
+  (c.carteraApertura?.abonos||[]).forEach((p,i)=>{
+   const valor=p.formaPago==='transferencia'?Number(p.valor||0):p.formaPago==='mixto'?Number(p.pagoTransferencia||0):0;
+   const clave='abono:apertura:'+c.id+':'+(p.id||'indice_'+i);
+   if(bancoCentavos(valor)>0&&!usadas.has(clave))lista.push({id:clave,fecha:p.fecha||'',valor:bancoCentavos(valor)/100,descripcion:'Abono deuda anterior · '+(c.nombre||'Cliente')+' · '+(i+1)});
+  });
  }
  return lista.sort((a,b)=>b.fecha.localeCompare(a.fecha)||a.descripcion.localeCompare(b.descripcion,'es'));
 }
@@ -4102,6 +4111,16 @@ function detalleGastosOperativosCierreHtml(gastos){
  return Array.isArray(gastos)&&gastos.length?`<h3 style="margin-top:14px">Detalle de gastos operativos descontados</h3><div class="table-wrap"><table><thead><tr><th>Usuario</th><th>Concepto</th><th>Observaciones</th><th class="cierre-egreso">Valor</th></tr></thead><tbody>${gastos.map(g=>`<tr><td>${esc(g.usuario||'')}</td><td>${esc(g.concepto||'')}</td><td>${esc(g.observaciones||'—')}</td><td class="cierre-egreso">${money(g.valor)}</td></tr>`).join('')}</tbody></table></div>`:'';
 }
 function nombreUsuarioCierre(v){return String(v.usuarioVenta||'No registrado').trim()||'No registrado'}
+// El abono se asigna a quien lo cobró, no al creador de la factura.
+// Los abonos antiguos sin usuarioId conservan la atribución histórica al vendedor de la factura.
+function nombreReceptorAbonoCredito(v,p){
+ const id=String(p?.usuarioId||'');
+ if(!id||id===String(v.usuarioVentaId||''))return nombreUsuarioCierre(v);
+ const vendedor=cargarUsuarios().find(u=>String(u.id)===id);
+ if(vendedor)return vendedor.usuario;
+ if(id===String(window.gmcUidAdminReceptorCaja||'')&&adminAutenticado)return usuarioQueRealizoVenta();
+ return 'Operador sin perfil identificable';
+}
 function importeCierre(v){return Number(v)||0}
 function redondeoCierre(n){return Math.round((Number(n)||0)*100)/100}
 function resumenCierreUsuario(fecha,usuario,usuarioId='',incluirVentaAdminPostCierre=false){
@@ -4131,13 +4150,13 @@ function resumenCierreUsuario(fecha,usuario,usuarioId='',incluirVentaAdminPostCi
  // Los abonos posteriores se registran en la fecha efectiva de RECEPCIÓN, sin duplicar la venta.
  // Abonos antiguos sin forma identificada conservan el tratamiento histórico en efectivo.
  for(const v of db.ventas){
-   if(v.formaPago!=='credito'||esDevuelta(v.id)||nombreUsuarioCierre(v)!==usuario)continue;
+   if(v.formaPago!=='credito'||esDevuelta(v.id))continue;
    if(Array.isArray(v.abonosPosteriores))for(const p of v.abonosPosteriores){
-     if(p.fecha!==fecha)continue;
-     // La venta posterior al cierre no se incluye en el cierre antiguo, pero
-     // los abonos que el vendedor reciba DESPUÉS sí deben entrar en su nueva caja.
+     if(p.fecha!==fecha||nombreReceptorAbonoCredito(v,p)!==usuario)continue;
+     // Conservar el cierre anterior del vendedor para ventas atribuidas después
+     // de cerrar. Si cobra el administrador, el abono corresponde a su caja.
      if(!incluirVentaAdminPostCierre&&v.ventaAdminAtribuida===true&&
-        (p.fecha<=v.fecha||String(p.usuarioId||'')!==String(usuarioId||'')))continue;
+        p.fecha<=v.fecha&&(!p.usuarioId||String(p.usuarioId)===String(v.usuarioVentaId||'')))continue;
      const valor=importeCierre(p.valor),metodo=p.formaPago||'efectivo';
      r.abonosPosteriores+=valor;
      if(metodo==='transferencia')r.abonosPosterioresTransferencia+=valor;
@@ -4151,7 +4170,7 @@ function resumenCierreUsuario(fecha,usuario,usuarioId='',incluirVentaAdminPostCi
    }
  }
  // Recuperaciones de deuda anterior: no constituyen venta del día.
- const idOperador=String(usuarioId||cargarUsuarios().find(u=>u.usuario===usuario)?.id||(db.clientes||[]).flatMap(c=>c.carteraApertura?.abonos||[]).find(p=>p.usuarioNombre===usuario)?.usuarioId||'');
+ const idOperador=String(usuarioId||cargarUsuarios().find(u=>u.usuario===usuario)?.id||(adminAutenticado&&usuario===usuarioQueRealizoVenta()?window.gmcUidAdminReceptorCaja:'')||(db.clientes||[]).flatMap(c=>c.carteraApertura?.abonos||[]).find(p=>p.usuarioNombre===usuario)?.usuarioId||'');
  for(const c of db.clientes||[]){
   for(const p of c.carteraApertura?.abonos||[]){
    if(p.fecha!==fecha||String(p.usuarioId)!==idOperador)continue;
@@ -4177,7 +4196,7 @@ function resumenCierreUsuario(fecha,usuario,usuarioId='',incluirVentaAdminPostCi
 }
 function usuariosCierreHoy(fecha){
  const deVentas=db.ventas.filter(v=>v.fecha===fecha&&!esDevuelta(v.id)).map(nombreUsuarioCierre);
- const conAbonos=db.ventas.filter(v=>v.formaPago==='credito'&&!esDevuelta(v.id)&&(v.abonosPosteriores||[]).some(p=>p.fecha===fecha)).map(nombreUsuarioCierre);
+ const conAbonos=db.ventas.filter(v=>v.formaPago==='credito'&&!esDevuelta(v.id)).flatMap(v=>(v.abonosPosteriores||[]).filter(p=>p.fecha===fecha).map(p=>nombreReceptorAbonoCredito(v,p)));
  const conApertura=(db.clientes||[]).flatMap(c=>(c.carteraApertura?.abonos||[]).filter(a=>a.fecha===fecha).map(a=>cargarUsuarios().find(u=>String(u.id)===String(a.usuarioId))?.usuario||a.usuarioNombre||''));
  const conStock=(db.stockUsuarios||[]).filter(a=>a.estado==='abierta').map(a=>cargarUsuarios().find(u=>u.id===a.usuarioId)?.usuario||a.usuario);
  const conGastos=(db.gastosOperativosUsuarios||[]).filter(g=>g.fecha===fecha).map(usuarioGastoOperativo);
@@ -4220,7 +4239,7 @@ function previewCierreDia(){
  document.getElementById('cEfectivoCierre').value=r.efectivoEsperado.toFixed(2);
  const ef=String(document.getElementById('cEfectivo').value).trim();
  const contado=ef===''?null:Number(ef);
- panel.innerHTML=`<div class="metric-line"><span>${general?'Cierre general':'Usuario'} · Fecha</span><b>${esc(general?NOMBRE_CIERRE_GENERAL:usuario)} · ${esc(fecha)}</b></div>${general?`<div class="metric-line"><span>Usuarios con operaciones hoy</span><b>${r.numUsuarios}</b></div>`:''}<div class="metric-line cierre-egreso"><span>Gastos operativos descontados</span><b>${money(r.gastosOperativos)}</b></div><div class="metric-line"><span>Efectivo</span><b>${money(r.efectivoVentas)}</b></div><div class="metric-line"><span>Transferencias</span><b>${money(r.transferencias)}</b></div><div class="metric-line"><span>Cheques</span><b>${money(r.chequesRecibidos)}</b></div><div class="metric-line"><strong>Total (efectivo + transferencias + cheques − gastos)</strong><b>${money(redondeoCierre(r.efectivoVentas+r.transferencias+r.chequesRecibidos-r.gastosOperativos))}</b></div>${r.sinFormaCobro?`<div class="metric-line"><span>Ventas sin forma registrada</span><b>${money(r.sinFormaCobro)}</b></div>`:''}${contado!==null&&Number.isFinite(contado)&&contado>=0?`<div class="metric-line"><strong>Cuadre de caja</strong><b class="${redondeoCierre(contado-r.efectivoEsperado)===0?'success':'danger'}">${redondeoCierre(contado-r.efectivoEsperado)===0?'CUADRADO':'DIFERENCIA '+money(redondeoCierre(contado-r.efectivoEsperado))}</b></div>`:''}${detalleChequesCierreHtml(r.chequesDetalle)}${detalleGastosOperativosCierreHtml(r.detalleGastosOperativos)}`;
+ panel.innerHTML=`<div class="metric-line"><span>${general?'Cierre general':'Usuario'} · Fecha</span><b>${esc(general?NOMBRE_CIERRE_GENERAL:usuario)} · ${esc(fecha)}</b></div>${general?`<div class="metric-line"><span>Usuarios con operaciones hoy</span><b>${r.numUsuarios}</b></div>`:''}<div class="metric-line cierre-egreso"><span>Gastos operativos descontados</span><b>${money(r.gastosOperativos)}</b></div><div class="metric-line"><span>Efectivo (ventas y abonos)</span><b>${money(redondeoCierre(r.efectivoVentas+r.abonosIniciales+r.abonosPosterioresEfectivo))}</b></div><div class="metric-line"><span>Transferencias</span><b>${money(r.transferencias)}</b></div><div class="metric-line"><span>Cheques</span><b>${money(r.chequesRecibidos)}</b></div><div class="metric-line"><strong>Total (efectivo + transferencias + cheques − gastos)</strong><b>${money(redondeoCierre(r.efectivoVentas+r.abonosIniciales+r.abonosPosterioresEfectivo+r.transferencias+r.chequesRecibidos-r.gastosOperativos))}</b></div>${r.sinFormaCobro?`<div class="metric-line"><span>Ventas sin forma registrada</span><b>${money(r.sinFormaCobro)}</b></div>`:''}${contado!==null&&Number.isFinite(contado)&&contado>=0?`<div class="metric-line"><strong>Cuadre de caja</strong><b class="${redondeoCierre(contado-r.efectivoEsperado)===0?'success':'danger'}">${redondeoCierre(contado-r.efectivoEsperado)===0?'CUADRADO':'DIFERENCIA '+money(redondeoCierre(contado-r.efectivoEsperado))}</b></div>`:''}${detalleChequesCierreHtml(r.chequesDetalle)}${detalleGastosOperativosCierreHtml(r.detalleGastosOperativos)}`;
  detalle.innerHTML=r.detalleVentas.map(v=>`<tr><td>${esc(v.numero||'S/N')}</td><td>${esc(nombreUsuarioCierre(v))}</td><td>${esc(v.tercero||'Consumidor final')}</td><td>${esc(detalleFormaCobro(v))}</td><td>${money(v.total)}</td><td class="cierre-abono">${v.formaPago==='credito'?money(v.abonoInicial??(importeCierre(v.abono)-(v.abonosPosteriores||[]).reduce((a,p)=>a+importeCierre(p.valor),0))):'—'}</td></tr>`).join('')||'<tr><td colspan="6" class="empty">Sin ventas para el cierre seleccionado hoy</td></tr>';
 }
 // Copia de detalle para imprimir el cierre sin recalcular sus importes históricos.
@@ -4258,7 +4277,7 @@ function renderMiCierre(){
  const hoy=fechaSistemaCierre(),r=resumenCierreUsuario(hoy,usuarioActual.usuario,usuarioActual.id),terminado=cierreHechoHoyUsuario(usuarioActual.id);
  const activos=stockPendienteUsuario(usuarioActual.id);
  const cont=document.getElementById('miCierreEfectivo'),dato=cont.value.trim(),contado=dato===''?null:Number(dato);
- panel.innerHTML=`<div class="metric-line"><span>Usuario · Fecha</span><b>${esc(usuarioActual.usuario)} · ${hoy}</b></div><div class="metric-line cierre-egreso"><span>Gastos operativos descontados</span><b>${money(r.gastosOperativos)}</b></div><div class="metric-line"><span>Efectivo</span><b>${money(r.efectivoVentas)}</b></div><div class="metric-line"><span>Transferencias</span><b>${money(r.transferencias)}</b></div><div class="metric-line"><span>Cheques</span><b>${money(r.chequesRecibidos)}</b></div><div class="metric-line"><strong>Total (efectivo + transferencias + cheques − gastos)</strong><b>${money(redondeoCierre(r.efectivoVentas+r.transferencias+r.chequesRecibidos-r.gastosOperativos))}</b></div>${contado!==null&&Number.isFinite(contado)?`<div class="metric-line"><span>Diferencia de efectivo</span><b>${money(contado-r.efectivoEsperado)}</b></div>`:''}${detalleChequesCierreHtml(r.chequesDetalle)}${detalleGastosOperativosCierreHtml(r.detalleGastosOperativos)}${terminado?'<p class="note">Caja cerrada por hoy. Los sobrantes ya se devolvieron al inventario central.</p>':''}`;
+ panel.innerHTML=`<div class="metric-line"><span>Usuario · Fecha</span><b>${esc(usuarioActual.usuario)} · ${hoy}</b></div><div class="metric-line cierre-egreso"><span>Gastos operativos descontados</span><b>${money(r.gastosOperativos)}</b></div><div class="metric-line"><span>Efectivo (ventas y abonos)</span><b>${money(redondeoCierre(r.efectivoVentas+r.abonosIniciales+r.abonosPosterioresEfectivo))}</b></div><div class="metric-line"><span>Transferencias</span><b>${money(r.transferencias)}</b></div><div class="metric-line"><span>Cheques</span><b>${money(r.chequesRecibidos)}</b></div><div class="metric-line"><strong>Total (efectivo + transferencias + cheques − gastos)</strong><b>${money(redondeoCierre(r.efectivoVentas+r.abonosIniciales+r.abonosPosterioresEfectivo+r.transferencias+r.chequesRecibidos-r.gastosOperativos))}</b></div>${contado!==null&&Number.isFinite(contado)?`<div class="metric-line"><span>Diferencia de efectivo</span><b>${money(contado-r.efectivoEsperado)}</b></div>`:''}${detalleChequesCierreHtml(r.chequesDetalle)}${detalleGastosOperativosCierreHtml(r.detalleGastosOperativos)}${terminado?'<p class="note">Caja cerrada por hoy. Los sobrantes ya se devolvieron al inventario central.</p>':''}`;
  tabla.innerHTML=(terminado?(db.stockUsuarios||[]).filter(a=>a.usuarioId===usuarioActual.id&&a.fechaCierre===hoy):activos).map(a=>`<tr><td>${esc(a.nombre)}</td><td>${Number(a.cantidad||0)}</td><td>${Math.max(0,Number(a.cantidad||0)-Number(a.restante||0)-Number(a.devuelto||0)).toFixed(2)}</td><td>${a.estado==='cerrada'?Number(a.devuelto||0).toFixed(2):Number(a.restante||0).toFixed(2)}</td></tr>`).join('')||'<tr><td colspan="4" class="empty">Sin productos asignados</td></tr>';
  if(boton){boton.disabled=terminado;boton.textContent=terminado?'Mi caja está cerrada':'Cerrar mi caja y devolver sobrantes'}
  const reimpresion=document.getElementById('btnImprimirMiCierre');
@@ -4287,7 +4306,7 @@ function renderCierres(){
  if(usuarios.includes(previo)||previo===CIERRE_GENERAL)combo.value=previo;
  const resumen=document.getElementById('tbResumenUsuariosCierre');
  const general=resumenCierreGeneral(fecha);
- resumen.innerHTML=(usuarios.map(u=>{const r=resumenCierreUsuario(fecha,u);return `<tr><td>${esc(u)}</td><td>${r.numVentas}</td><td>${money(r.ventas)}</td><td class="cierre-egreso">${money(r.gastosOperativos)}</td><td>${money(r.ventasNetas)}</td><td>${money(r.efectivoVentas)}</td><td>${money(r.transferencias)}</td><td>${money(r.chequesRecibidos)}</td><td>${money(r.ventasCredito)}</td><td class="cierre-abono">${money(r.abonosCredito)}</td><td><b>${money(r.efectivoEsperado)}</b></td></tr>`}).join('')||'<tr><td colspan="11" class="empty">No hay ventas ni abonos registrados hoy</td></tr>')+`<tr style="background:#eaf3ff;font-weight:800"><td>TOTAL GENERAL</td><td>${general.numVentas}</td><td>${money(general.ventas)}</td><td class="cierre-egreso">${money(general.gastosOperativos)}</td><td>${money(general.ventasNetas)}</td><td>${money(general.efectivoVentas)}</td><td>${money(general.transferencias)}</td><td>${money(general.chequesRecibidos)}</td><td>${money(general.ventasCredito)}</td><td class="cierre-abono">${money(general.abonosCredito)}</td><td>${money(general.efectivoEsperado)}</td></tr>`;
+ resumen.innerHTML=(usuarios.map(u=>{const r=resumenCierreUsuario(fecha,u);return `<tr><td>${esc(u)}</td><td>${r.numVentas}</td><td>${money(r.ventas)}</td><td class="cierre-egreso">${money(r.gastosOperativos)}</td><td>${money(r.ventasNetas)}</td><td>${money(redondeoCierre(r.efectivoVentas+r.abonosIniciales+r.abonosPosterioresEfectivo))}</td><td>${money(r.transferencias)}</td><td>${money(r.chequesRecibidos)}</td><td>${money(r.ventasCredito)}</td><td class="cierre-abono">${money(r.abonosCredito)}</td><td><b>${money(r.efectivoEsperado)}</b></td></tr>`}).join('')||'<tr><td colspan="11" class="empty">No hay ventas ni abonos registrados hoy</td></tr>')+`<tr style="background:#eaf3ff;font-weight:800"><td>TOTAL GENERAL</td><td>${general.numVentas}</td><td>${money(general.ventas)}</td><td class="cierre-egreso">${money(general.gastosOperativos)}</td><td>${money(general.ventasNetas)}</td><td>${money(redondeoCierre(general.efectivoVentas+general.abonosIniciales+general.abonosPosterioresEfectivo))}</td><td>${money(general.transferencias)}</td><td>${money(general.chequesRecibidos)}</td><td>${money(general.ventasCredito)}</td><td class="cierre-abono">${money(general.abonosCredito)}</td><td>${money(general.efectivoEsperado)}</td></tr>`;
  previewCierreDia();
  tabla.innerHTML=db.cierres.slice().reverse().map(c=>{
    const nuevo=Object.prototype.hasOwnProperty.call(c,'efectivoEsperado');
@@ -4299,7 +4318,7 @@ function verCierre(id){
  const c=db.cierres.find(x=>x.id===id);if(!c)return;
  const nuevo=Object.prototype.hasOwnProperty.call(c,'efectivoEsperado');
  if(!nuevo){openModal('Cierre '+c.fecha,`<div class="metric-line"><span>Ventas</span><b>${money(c.ventas)}</b></div><div class="metric-line cierre-egreso"><span>Costo</span><b>${money(c.costo)}</b></div><div class="metric-line cierre-egreso"><span>Gastos</span><b>${money(c.gastos)}</b></div><div class="metric-line"><span>Utilidad</span><b>${money(c.utilidad)}</b></div><div class="metric-line cierre-egreso"><span>Compras</span><b>${money(c.compras)}</b></div><p><b>Observaciones:</b> ${esc(c.obs||'—')}</p>`);return;}
- openModal('Cierre '+c.fecha+' · '+c.usuario,`<div class="metric-line"><span>Usuario</span><b>${esc(c.usuario)}</b></div>${c.gastosOperativos!=null?`<div class="metric-line cierre-egreso"><span>Gastos operativos descontados</span><b>${money(c.gastosOperativos)}</b></div>`:''}<div class="metric-line"><span>Efectivo</span><b>${money(c.efectivoVentas)}</b></div><div class="metric-line"><span>Transferencias</span><b>${money(c.transferencias)}</b></div>${c.chequesRecibidos!=null?`<div class="metric-line"><span>Cheques</span><b>${money(c.chequesRecibidos)}</b></div>`:''}${c.sinFormaCobro?`<div class="metric-line"><span>Ventas sin forma identificada</span><b>${money(c.sinFormaCobro)}</b></div>`:''}<div class="metric-line"><span>${c.tipo==='personal'?'Efectivo contado':'Efectivo real (efectivo recibido)'}</span><b>${c.efectivo===null?'—':money(c.efectivo)}</b></div><div class="metric-line"><span>Diferencia</span><b>${c.diferencia===null?'—':money(c.diferencia)}</b></div>${detalleChequesCierreHtml(c.chequesDetalle)}${detalleGastosOperativosCierreHtml(c.detalleGastosOperativos)}<p><b>Observaciones:</b> ${esc(c.obs||'—')}</p>`);
+ openModal('Cierre '+c.fecha+' · '+c.usuario,`<div class="metric-line"><span>Usuario</span><b>${esc(c.usuario)}</b></div>${c.gastosOperativos!=null?`<div class="metric-line cierre-egreso"><span>Gastos operativos descontados</span><b>${money(c.gastosOperativos)}</b></div>`:''}<div class="metric-line"><span>Efectivo (ventas y abonos)</span><b>${money(redondeoCierre(Number(c.efectivoVentas||0)+Number(c.abonosIniciales||0)+Number(c.abonosPosterioresEfectivo||0)))}</b></div><div class="metric-line"><span>Transferencias</span><b>${money(c.transferencias)}</b></div>${c.chequesRecibidos!=null?`<div class="metric-line"><span>Cheques</span><b>${money(c.chequesRecibidos)}</b></div>`:''}${c.sinFormaCobro?`<div class="metric-line"><span>Ventas sin forma identificada</span><b>${money(c.sinFormaCobro)}</b></div>`:''}<div class="metric-line"><span>${c.tipo==='personal'?'Efectivo contado':'Efectivo real (efectivo recibido)'}</span><b>${c.efectivo===null?'—':money(c.efectivo)}</b></div><div class="metric-line"><span>Diferencia</span><b>${c.diferencia===null?'—':money(c.diferencia)}</b></div>${detalleChequesCierreHtml(c.chequesDetalle)}${detalleGastosOperativosCierreHtml(c.detalleGastosOperativos)}<p><b>Observaciones:</b> ${esc(c.obs||'—')}</p>`);
 }
 // Informe imprimible del cierre guardado, independiente del estado de los filtros actuales.
 function imprimirCierre(id){
@@ -4316,6 +4335,7 @@ function imprimirCierre(id){
    fila('Ventas del día'+(c.numVentas!=null?' ('+Number(c.numVentas)+')':''),n(c.ventas))+
    (c.gastosOperativos!=null?fila('Gastos operativos descontados',n(c.gastosOperativos),false,'cierre-egreso')+fila('Ventas netas (ventas - gastos operativos)',n(c.ventasNetas),true):'')+
    fila('Ventas cobradas en efectivo',n(c.efectivoVentas))+
+   fila('Efectivo de ventas y abonos antes de gastos',n(redondeoCierre(Number(c.efectivoVentas||0)+Number(c.abonosIniciales||0)+Number(c.abonosPosterioresEfectivo||0))))+
    fila('Transferencias (ventas y abonos)',n(c.transferencias))+
    (c.chequesRecibidos!=null?fila('Cheques recibidos (pendientes de verificar)',n(c.chequesRecibidos)):'')+
    (c.abonosPosterioresTransferencia?fila('Abonos posteriores por transferencia (incluidos arriba)',n(c.abonosPosterioresTransferencia),false,'cierre-abono'):'')+
@@ -4764,6 +4784,7 @@ function bloquearFirebaseGMC(tipo='usuario'){
   if(stopPerfilesGMC){stopPerfilesGMC();stopPerfilesGMC=null;}
   if(stopPerfilActualGMC){stopPerfilActualGMC();stopPerfilActualGMC=null;}
   firebaseRolGMC=null;
+  window.gmcUidAdminReceptorCaja=null; // Auditoría de cobros: invalidar identidad al cerrar sesión.
   adminAutenticado=false;usuarioActual=null;
   actualizarSesionUI();
   document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
@@ -4798,6 +4819,7 @@ window.gmcRegistrarAdministradorFirebase=async()=>{
 async function establecerUsuarioFirebaseGMC(user,perfil,claveIngresada=''){
   if(!perfil||perfil.uid!==user.uid||perfil.activo!==true||!['admin','vendedor'].includes(perfil.rol))throw Error('Esta cuenta no tiene un perfil autorizado y activo en Firestore.');
   firebaseRolGMC=perfil.rol;
+  window.gmcUidAdminReceptorCaja=perfil.rol==='admin'?user.uid:null; // Identifica abonos cobrados por administrador.
   if(perfil.rol==='admin'){
     if(claveIngresada){
       const sal=Array.from(crypto.getRandomValues(new Uint8Array(16)),x=>x.toString(16).padStart(2,'0')).join('');
