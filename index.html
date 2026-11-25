@@ -6566,7 +6566,7 @@ function gmcSuscribirCierresFirebase(uidSesion){
   getDocsFromServer(query(collection(firestoreGMC,'procesosCierre'),where('usuarioId','==',uidSesion)))
    .then(snap=>{
     if(firebaseAuthGMC.currentUser?.uid!==uidSesion||gmcPendienteCierre())return;
-    const pendiente=snap.docs.find(d=>d.data().estado==='procesando');
+    const pendiente=snap.docs.find(d=>d.data().estado==='procesando'&&d.data().tipo==='personal'&&d.data().operadorId===uidSesion);
     if(!pendiente)return;
     const d=pendiente.data(),p={operadorId:uidSesion,fecha:d.fecha,usuario:d.cierre.usuario,cierre:d.cierre};
     localStorage.setItem(gmcClaveCierrePendiente(),JSON.stringify(p));
@@ -6727,8 +6727,8 @@ function gmcResumenParaCerrar(fecha,usuario,usuarioId,tipo){
  if(tipo==='general')copia.numUsuarios=r.numUsuarios;
  return copia;
 }
-// CIERRE PERSONAL PROGRESIVO GMC: cada asignacion se devuelve una sola vez.
-// El cierre personal de 1-2 asignaciones conserva su transaccion original; desde 3 se usa el proceso progresivo con el mismo ID.
+// CIERRE PROGRESIVO GMC: personal (desde 3 asignaciones) o individual administrativo (desde 1).
+// Cada asignacion se devuelve una sola vez con el mismo ID; el cierre general no cambia.
 const GMC_CIERRE_PROGRESIVO_DESDE=3;
 const gmcRutaProcesoCierre=(id)=>doc(firestoreGMC,'procesosCierre',id);
 function gmcResumenStockDevueltoEtapas(retornos){
@@ -6739,16 +6739,19 @@ function gmcResumenStockDevueltoEtapas(retornos){
 }
 async function gmcCierreProgresivoFirebase(pendiente){
  const auth=firebaseAuthGMC.currentUser,cierre=pendiente.cierre,id=cierre.id;
- if(!auth||pendiente.operadorId!==auth.uid||cierre.usuarioId!==auth.uid||cierre.tipo!=='personal')
-  throw Error('El cierre progresivo exige la sesion original del vendedor y su cierre personal.');
+ const propio=cierre.tipo==='personal'&&firebaseRolGMC==='vendedor'&&cierre.usuarioId===auth?.uid;
+ const administrativo=cierre.tipo==='individual'&&firebaseRolGMC==='admin'&&adminAutenticado&&cierre.usuarioId!==auth?.uid;
+ if(!auth||pendiente.operadorId!==auth.uid||(!propio&&!administrativo))
+  throw Error('El cierre progresivo requiere al vendedor titular o al administrador autenticado, con el mismo identificador.');
  const refProceso=gmcRutaProcesoCierre(id),refCierre=doc(firestoreGMC,'cierresCaja',id);
  let snap=await getDocFromServer(refProceso);
  let confirmadoEnEstaEjecucion=false;
  if(!snap.exists()){
   if(pendiente.fecha!==today())throw Error('El cierre pendiente corresponde a otra fecha y no tiene un proceso iniciado en Firestore. Requiere revision administrativa; no se altero el inventario.');
-  const lista=await getDocsFromServer(query(collection(firestoreGMC,'stockUsuarios'),where('usuarioId','==',auth.uid)));
+  const lista=await getDocsFromServer(query(collection(firestoreGMC,'stockUsuarios'),where('usuarioId','==',cierre.usuarioId)));
   const abiertas=lista.docs.filter(d=>d.data().estado==='abierta');
-  if(abiertas.length<GMC_CIERRE_PROGRESIVO_DESDE)throw Error('El número de asignaciones cambió a menos de '+GMC_CIERRE_PROGRESIVO_DESDE+'. Compruebe el cierre pendiente antes de reintentarlo; no se modificó el inventario.');
+  const minimo=cierre.tipo==='individual'?1:GMC_CIERRE_PROGRESIVO_DESDE;
+  if(abiertas.length<minimo)throw Error('El número de asignaciones cambió a menos de '+minimo+'. Compruebe el cierre pendiente antes de reintentarlo; no se modificó el inventario.');
   if(abiertas.length>300)throw Error('Hay mas de 300 documentos abiertos. Se requiere un procedimiento especial antes de realizar devoluciones.');
   const ids=abiertas.map(d=>d.id).sort();
   // Confirmar que todos los documentos del servidor esten disponibles y sin IDs repetidos.
@@ -6760,7 +6763,7 @@ async function gmcCierreProgresivoFirebase(pendiente){
    if(existente.exists())return;
    if(final.exists()||general.exists())throw Error('Existe un cierre confirmado. No se creo otro proceso.');
    tx.set(refProceso,{
-    id,fecha:cierre.fecha,usuarioId:auth.uid,operadorId:auth.uid,tipo:'personal',
+    id,fecha:cierre.fecha,usuarioId:cierre.usuarioId,operadorId:auth.uid,tipo:cierre.tipo,
     estado:'procesando',creadoServidor:serverTimestamp(),
     asignacionesIds:ids,procesados:[],devoluciones:[],retornos:{},cierre
    });
@@ -6769,8 +6772,10 @@ async function gmcCierreProgresivoFirebase(pendiente){
  }
  if(!snap.exists())throw Error('No se pudo verificar el proceso de cierre en Firestore.');
  const procesoInicial=snap.data();
- if(procesoInicial.id!==id||procesoInicial.usuarioId!==auth.uid||procesoInicial.operadorId!==auth.uid||procesoInicial.fecha!==cierre.fecha)
+ if(procesoInicial.id!==id||procesoInicial.usuarioId!==cierre.usuarioId||procesoInicial.operadorId!==auth.uid||procesoInicial.tipo!==cierre.tipo||procesoInicial.fecha!==cierre.fecha)
   throw Error('Existe un proceso de cierre con datos de otro usuario o fecha. No se escribio inventario.');
+ if(procesoInicial.cierre?.id!==id||procesoInicial.cierre?.usuarioId!==cierre.usuarioId||procesoInicial.cierre?.tipo!==cierre.tipo||procesoInicial.cierre?.fecha!==cierre.fecha)
+  throw Error('Los datos originales del proceso no coinciden con el cierre pendiente. No se modificó inventario.');
  if(procesoInicial.estado==='cerrado'){
   const confirmado=await getDocFromServer(refCierre);
   if(!confirmado.exists())throw Error('El proceso aparece cerrado pero falta el documento final: requiere auditoria.');
@@ -6802,7 +6807,7 @@ async function gmcCierreProgresivoFirebase(pendiente){
    const ra=doc(firestoreGMC,'stockUsuarios',aid),sa=await tx.get(ra);
    if(!sa.exists())throw Error('Asignacion '+aid+' no encontrada en el servidor.');
    const a=sa.data();
-   if(a.estado!=='abierta'||a.usuarioId!==auth.uid)throw Error('La asignacion '+aid+' fue modificada; no se duplico ninguna devolucion.');
+   if(a.estado!=='abierta'||a.usuarioId!==cierre.usuarioId)throw Error('La asignacion '+aid+' fue modificada; no se duplico ninguna devolucion.');
    const cantidad=gmcRedondear6(Number(a.restante));
    if(!Number.isFinite(cantidad)||cantidad<0||cantidad>Number(a.cantidad)+0.000001)throw Error('Cantidad inconsistente en asignacion '+aid);
    const rp=doc(firestoreGMC,'productos',a.productoId);
@@ -6849,9 +6854,11 @@ async function gmcEjecutarCierreFirestore(pendiente){
  gmcCierreEnCurso=true;
  try{
   const cierre=pendiente.cierre,refCierre=doc(firestoreGMC,'cierresCaja',cierre.id);
-  const procesoGuardado=cierre.tipo==='personal'?await getDocFromServer(gmcRutaProcesoCierre(cierre.id)):null;
-  const usaEtapas=cierre.tipo==='personal'&&(procesoGuardado?.exists() ||
-   (db.stockUsuarios||[]).filter(a=>a.estado==='abierta'&&a.usuarioId===cierre.usuarioId).length>=GMC_CIERRE_PROGRESIVO_DESDE);
+  const tieneAsignaciones=cierre.tipo==='personal'||cierre.tipo==='individual';
+  const procesoGuardado=tieneAsignaciones?await getDocFromServer(gmcRutaProcesoCierre(cierre.id)):null;
+  const umbral=cierre.tipo==='individual'?1:GMC_CIERRE_PROGRESIVO_DESDE;
+  const usaEtapas=tieneAsignaciones&&(procesoGuardado?.exists() ||
+   (db.stockUsuarios||[]).filter(a=>a.estado==='abierta'&&a.usuarioId===cierre.usuarioId).length>=umbral);
   const resultado=usaEtapas
    ? await gmcCierreProgresivoFirebase(pendiente)
    : await runTransaction(firestoreGMC,async tx=>{
@@ -6943,6 +6950,8 @@ window.gmcGenerarMiCierreFirebase=async()=>{
   const remotoPendiente=procesos.docs.find(d=>d.data().estado==='procesando');
   if(remotoPendiente){
    const anterior=remotoPendiente.data();
+   if(anterior.tipo!=='personal'||anterior.operadorId!==firebaseAuthGMC.currentUser.uid)
+    throw Error('Existe un cierre de su caja iniciado por el administrador. No puede comenzar otro; consulte al administrador para finalizar el mismo proceso.');
    localStorage.setItem(gmcClaveCierrePendiente(),JSON.stringify({operadorId:firebaseAuthGMC.currentUser.uid,fecha:anterior.fecha,usuario:anterior.cierre.usuario,cierre:anterior.cierre}));
    gmcMostrarCierrePendiente();
    throw Error('Ya existe un cierre progresivo pendiente de '+anterior.fecha+'. Debe completar ese mismo cierre antes de crear otro.');
@@ -7004,7 +7013,10 @@ window.gmcDiagnosticarCierreFirebase=async()=>{
  const perfil=await leer('perfiles/actual',doc(firestoreGMC,'perfiles',auth.uid));
  if(perfil?.existe){
   informe.perfil={rol:perfil.datos.rol,activo:perfil.datos.activo,permisoVentas:Array.isArray(perfil.datos.modulos)&&perfil.datos.modulos.includes('ventas')};
-  comprobar('Perfil vendedor autorizado',perfil.datos.activo===true&&perfil.datos.rol==='vendedor'&&informe.perfil.permisoVentas);
+  const perfilAprobado=perfil.datos.activo===true&&(cierre.tipo==='personal'
+   ? perfil.datos.rol==='vendedor'&&informe.perfil.permisoVentas
+   : perfil.datos.rol==='admin');
+  comprobar(cierre.tipo==='personal'?'Perfil vendedor autorizado':'Perfil administrador autorizado',perfilAprobado);
  }
  const existente=await leer('cierresCaja/'+cierre.id,doc(firestoreGMC,'cierresCaja',cierre.id));
  informe.cierreExistente=existente?.existe??null;
