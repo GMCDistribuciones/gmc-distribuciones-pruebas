@@ -865,14 +865,15 @@
           <div><label>Ruta (ventas y productos)</label><select id="anFiltroRuta" onchange="actualizarPanelAnalisis()"><option value="">Todas las rutas</option></select></div>
           <button class="btn btn-primary" onclick="actualizarPanelAnalisis()">Consultar</button>
         </div>
-        <p class="note" style="margin:0">Cada ruta pertenece al cliente: las ventas se relacionan con la ruta registrada en su ficha, independientemente del vendedor que las realizó. Las ventas antiguas sin identificador se vinculan por nombre únicamente si existe un cliente con coincidencia inequívoca; en caso contrario se muestran sin ruta. Las compras y los gastos se consultan solamente por fechas. Las ventas devueltas figuran en el historial, pero no se suman a los productos vendidos ni a las salidas de inventario.</p>
+        <p class="note" style="margin:0">Cada ruta pertenece al cliente: las ventas se relacionan con la ruta registrada en su ficha, independientemente del vendedor que las realizó. Las ventas antiguas sin identificador se vinculan por nombre únicamente si existe un cliente con coincidencia inequívoca; en caso contrario se muestran sin ruta. Las compras y los gastos administrativos se consultan solamente por fechas; los gastos operativos se consultan por fechas y vendedor, sin distribuirlos por ruta. Las ventas devueltas figuran en el historial, pero no se suman a los productos vendidos ni a las salidas de inventario.</p>
         <div class="grid g4" style="margin-top:14px" id="anResumenOperacion">
           <div class="card kpi"><small>Ventas vigentes filtradas</small><strong id="anRepTotalVentas">$0.00</strong></div>
           <div class="card kpi"><small>Unidades vendidas</small><strong id="anRepUnidades">0</strong></div>
           <div class="card kpi"><small>Compras del período</small><strong id="anRepCompras">$0.00</strong></div>
           <div class="card kpi"><small>Gastos del período</small><strong id="anRepGastos">$0.00</strong></div>
+          <div class="card kpi"><small>Gastos operativos del vendedor</small><strong id="anRepGastosOperativos">$0.00</strong></div>
           <div class="card kpi"><small>Costo de productos vendidos</small><strong id="anRepCostoVentas">$0.00</strong></div>
-          <div class="card kpi"><small>Utilidad bruta (ventas - costo)</small><strong id="anRepUtilidadBruta">$0.00</strong></div>
+          <div class="card kpi"><small>Utilidad bruta (ventas - costo - gastos operativos)</small><strong id="anRepUtilidadBruta">$0.00</strong></div>
           <div class="card kpi"><small>Utilidad neta general (menos gastos)</small><strong id="anRepGananciaNeta">$0.00</strong></div>
         </div>
       </div>
@@ -909,7 +910,7 @@
       <div class="card" style="margin-top:14px">
         <h3>6. Utilidad entre fechas: ventas, costo de lo vendido y gastos</h3>
         <p class="muted" id="anGananciaResumen" style="font-size:12px"></p>
-        <div class="table-wrap"><table><thead><tr><th>Fecha</th><th>Ventas (PVP aplicado)</th><th>Costo de lo vendido</th><th>Utilidad bruta</th><th>Gastos</th><th>Utilidad neta</th></tr></thead><tbody id="anGananciasNetas"></tbody></table></div>
+        <div class="table-wrap"><table><thead><tr><th>Fecha</th><th>Ventas (PVP aplicado)</th><th>Costo de lo vendido</th><th>Gastos operativos</th><th>Utilidad bruta</th><th>Gastos</th><th>Utilidad neta</th></tr></thead><tbody id="anGananciasNetas"></tbody></table></div>
         <div id="anGrafGanancias" style="margin-top:14px"></div>
       </div>
       <!-- Analítica de cartera pendiente con los filtros generales de Análisis. -->
@@ -4382,12 +4383,14 @@ function renderAnalisis(){
   const ventas=todas.filter(v=>!esDevuelta(v.id));
   const compras=(db.compras||[]).filter(c=>between(c.fecha,d,h));
   const gastos=(db.gastos||[]).filter(g=>between(g.fecha,d,h));
+  const gastosOperativos=(db.gastosOperativosUsuarios||[]).filter(g=>between(g.fecha,d,h)&&(!vendedor||usuarioGastoOperativo(g)===vendedor));
   const totalVentas=ventas.reduce((s,v)=>s+Number(v.total||0),0);
   const unidades=ventas.reduce((s,v)=>s+(v.lineas||[]).reduce((n,l)=>n+Number(l.cantidad||0),0),0);
   const totalCompras=compras.reduce((s,c)=>s+Number(c.total||0),0);
   const totalGastos=gastos.reduce((s,g)=>s+Number(g.valor||0),0);
+  const totalGastosOperativos=gastosOperativos.reduce((s,g)=>s+Number(g.valor||0),0);
   const costoVendido=ventas.reduce((s,v)=>s+costoVentaAnalisis(v),0);
-  const utilidadBruta=totalVentas-costoVendido;
+  const utilidadBruta=totalVentas-costoVendido-totalGastosOperativos;
   const sinFiltroVendedorRuta=!vendedor&&!ruta;
   // Los gastos generales no están vinculados a rutas o vendedores: no inventar su reparto.
   const utilidadNeta=utilidadBruta-totalGastos;
@@ -4395,6 +4398,7 @@ function renderAnalisis(){
   document.getElementById('anRepUnidades').textContent=Number(unidades.toFixed(2)).toLocaleString('es-EC');
   document.getElementById('anRepCompras').textContent=money(totalCompras);
   document.getElementById('anRepGastos').textContent=money(totalGastos);
+  document.getElementById('anRepGastosOperativos').textContent=money(totalGastosOperativos);
   document.getElementById('anRepCostoVentas').textContent=money(costoVendido);
   document.getElementById('anRepUtilidadBruta').textContent=money(utilidadBruta);
   document.getElementById('anRepGananciaNeta').textContent=sinFiltroVendedorRuta?money(utilidadNeta):'—';
@@ -4459,24 +4463,27 @@ function renderAnalisis(){
   const listaGastos=[...gastosPorCategoria.entries()].map(([label,valor])=>({label,valor})).sort((a,b)=>b.valor-a.valor||a.label.localeCompare(b.label,'es'));
   document.getElementById('anGrafGastos').innerHTML=`<h4 style="margin:0 0 8px">Gráfico explicativo</h4><p class="muted" style="font-size:12px;margin:0 0 8px">Distribución de los gastos por categoría en el período seleccionado.</p>${graficoPastelAnalisis(listaGastos,money,'Sin gastos para graficar')}`;
 
-  const fechasConDatos=[...new Set(ventas.map(v=>v.fecha).concat(gastos.map(g=>g.fecha)).filter(Boolean))].sort();
-  const ventasFechaMap=new Map(), costosFechaMap=new Map(), gastosFechaMap=new Map();
+  const fechasConDatos=[...new Set(ventas.map(v=>v.fecha).concat(gastos.map(g=>g.fecha),gastosOperativos.map(g=>g.fecha)).filter(Boolean))].sort();
+  const ventasFechaMap=new Map(), costosFechaMap=new Map(), gastosFechaMap=new Map(), gastosOperativosFechaMap=new Map();
   for(const v of ventas){
     ventasFechaMap.set(v.fecha,(ventasFechaMap.get(v.fecha)||0)+Number(v.total||0));
     costosFechaMap.set(v.fecha,(costosFechaMap.get(v.fecha)||0)+costoVentaAnalisis(v));
   }
   for(const g of gastos)gastosFechaMap.set(g.fecha,(gastosFechaMap.get(g.fecha)||0)+Number(g.valor||0));
+  for(const g of gastosOperativos)gastosOperativosFechaMap.set(g.fecha,(gastosOperativosFechaMap.get(g.fecha)||0)+Number(g.valor||0));
   const detalleGanancia=fechasConDatos.map(fecha=>{
     const ventasDia=Number(ventasFechaMap.get(fecha)||0);
     const costoDia=Number(costosFechaMap.get(fecha)||0);
+    const gastoOperativoDia=Number(gastosOperativosFechaMap.get(fecha)||0);
     const gastoDia=Number(gastosFechaMap.get(fecha)||0);
-    return {fecha,ventas:ventasDia,costo:costoDia,bruta:ventasDia-costoDia,gastos:gastoDia,neta:ventasDia-costoDia-gastoDia};
+    const brutaDia=ventasDia-costoDia-gastoOperativoDia;
+    return {fecha,ventas:ventasDia,costo:costoDia,operativos:gastoOperativoDia,bruta:brutaDia,gastos:gastoDia,neta:brutaDia-gastoDia};
   });
   document.getElementById('anGananciaResumen').textContent=sinFiltroVendedorRuta
-    ? `Ventas según PVP aplicado: ${money(totalVentas)} · Costo de productos vendidos: ${money(costoVendido)} · Utilidad bruta: ${money(utilidadBruta)} · Gastos: ${money(totalGastos)} · Utilidad neta: ${money(utilidadNeta)}. Las compras para inventario no se restan nuevamente.`
-    : `Ventas según PVP aplicado: ${money(totalVentas)} · Costo de productos vendidos: ${money(costoVendido)} · Utilidad bruta del vendedor/ruta: ${money(utilidadBruta)}. La utilidad neta solo se calcula sin filtros de vendedor ni ruta porque los gastos no están distribuidos por vendedor o ruta.`;
-  document.getElementById('anGananciasNetas').innerHTML=detalleGanancia.map(x=>`<tr><td>${esc(x.fecha)}</td><td>${money(x.ventas)}</td><td>${money(x.costo)}</td><td class="${x.bruta<0?'danger':'success'}">${money(x.bruta)}</td><td>${sinFiltroVendedorRuta?money(x.gastos):'—'}</td><td class="${!sinFiltroVendedorRuta?'':x.neta<0?'danger':'success'}">${sinFiltroVendedorRuta?money(x.neta):'—'}</td></tr>`).join('')||'<tr><td colspan="6" class="empty">Sin ventas ni gastos para las fechas consultadas</td></tr>';
-  document.getElementById('anGrafGanancias').innerHTML=`<h4 style="margin:0 0 8px">Gráfico explicativo</h4><p class="muted" style="font-size:12px;margin:0 0 8px">${sinFiltroVendedorRuta?'Utilidad neta diaria: ventas menos costo de productos vendidos y gastos.':'Utilidad bruta diaria según vendedor/ruta: ventas menos costo de productos vendidos.'}</p>${graficoPastelAnalisis(detalleGanancia.map(x=>({label:x.fecha,short:x.fecha.slice(5),valor:sinFiltroVendedorRuta?x.neta:x.bruta})),money,'Sin datos de utilidad para graficar')}`;
+    ? `Ventas según PVP aplicado: ${money(totalVentas)} · Gastos operativos: ${money(totalGastosOperativos)} · Costo de productos vendidos: ${money(costoVendido)} · Utilidad bruta: ${money(utilidadBruta)} · Gastos administrativos: ${money(totalGastos)} · Utilidad neta: ${money(utilidadNeta)}. Las compras para inventario no se restan nuevamente.`
+    : `Ventas según PVP aplicado: ${money(totalVentas)} · Gastos operativos del vendedor en el período (sin reparto por ruta): ${money(totalGastosOperativos)} · Costo de productos vendidos: ${money(costoVendido)} · Utilidad bruta del vendedor/ruta: ${money(utilidadBruta)}. La utilidad neta solo se calcula sin filtros de vendedor ni ruta porque los gastos administrativos no están distribuidos por vendedor o ruta.`;
+  document.getElementById('anGananciasNetas').innerHTML=detalleGanancia.map(x=>`<tr><td>${esc(x.fecha)}</td><td>${money(x.ventas)}</td><td>${money(x.costo)}</td><td>${money(x.operativos)}</td><td class="${x.bruta<0?'danger':'success'}">${money(x.bruta)}</td><td>${sinFiltroVendedorRuta?money(x.gastos):'—'}</td><td class="${!sinFiltroVendedorRuta?'':x.neta<0?'danger':'success'}">${sinFiltroVendedorRuta?money(x.neta):'—'}</td></tr>`).join('')||'<tr><td colspan="7" class="empty">Sin ventas ni gastos para las fechas consultadas</td></tr>';
+  document.getElementById('anGrafGanancias').innerHTML=`<h4 style="margin:0 0 8px">Gráfico explicativo</h4><p class="muted" style="font-size:12px;margin:0 0 8px">${sinFiltroVendedorRuta?'Utilidad neta diaria: ventas menos costo de productos vendidos, gastos operativos y gastos administrativos.':'Utilidad bruta diaria según vendedor/ruta: ventas menos costo de productos vendidos y gastos operativos.'}</p>${graficoPastelAnalisis(detalleGanancia.map(x=>({label:x.fecha,short:x.fecha.slice(5),valor:sinFiltroVendedorRuta?x.neta:x.bruta})),money,'Sin datos de utilidad para graficar')}`;
   renderAnaliticaCarteraPendiente();
 }
 // Cierre diario: fecha local del sistema; cierre individual o consolidado sin duplicar movimientos.
