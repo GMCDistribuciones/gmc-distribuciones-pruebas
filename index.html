@@ -436,6 +436,7 @@
           <div><label>Ruta</label><select id="vRuta" onchange="renderVentas()"></select></div>
           <button class="btn btn-primary" onclick="renderVentas()">Filtrar</button>
         </div>
+        <p id="gmcVentaCorreccionPendiente" class="note" style="display:none;margin:10px 0" aria-live="polite"></p>
         <div class="table-wrap"><table><thead><tr><th>Fecha</th><th>Documento</th><th>Cliente</th><th>Ruta</th><th>Usuario</th><th>Total</th><th>Cobro</th><th>Abonado</th><th>Saldo</th><th></th></tr></thead><tbody id="tbVentas"></tbody></table></div>
       </div>
     </section>
@@ -2389,6 +2390,12 @@ function gmcImprimirRutaFinalizadaHistorica(){
 // No modifica la venta ni considera un abono dos veces.
 function gmcRutasSaldoAlCorte(v,fecha){
  if(!v||v.formaPago!=='credito'||!/^\d{4}-\d{2}-\d{2}$/.test(String(v.fecha||''))||String(v.fecha||'')>fecha)return null;
+ if(v.estado==='anulada'||v.anulada===true){
+  const momento=v.anuladaEn;
+  const fechaAnulada=typeof momento?.toDate==='function'?momento.toDate().toISOString().slice(0,10):
+   Number.isFinite(Number(momento?.seconds))?new Date(Number(momento.seconds)*1000).toISOString().slice(0,10):'';
+  if(!fechaAnulada||fechaAnulada<=fecha)return null;
+ }
  const devolucion=(db.devoluciones||[]).find(d=>String(d.ventaId)===String(v.id));
  if(devolucion&&(!devolucion.fecha||String(devolucion.fecha)<=fecha))return null;
  const centavos=n=>Math.max(0,Math.round((Number(n)||0)*100));
@@ -2896,11 +2903,11 @@ function renderVentas(){
  let d=vDesde.value,h=vHasta.value;
  let arr=db.ventas.filter(x=>between(x.fecha,d,h)&&metaCoincideFiltroVendedor(x,usuario)&&
    (!ruta||(ruta==='__sin_ruta__'?!rutaVentaAnalisis(x):rutaVentaAnalisis(x)===ruta)));
- tbVentas.innerHTML=arr.slice().reverse().map(x=>`<tr><td>${x.fecha}</td><td>${esc(x.numero)}</td><td>${esc(x.tercero)}</td><td>${esc(rutaVentaAnalisis(x)||'Sin ruta asignada')}</td><td>${esc(x.usuarioVenta||'No registrado')}${x.ventaAdminAtribuida===true?'<br><small class="muted">Registrada por administrador tras cierre · cobro a cargo del vendedor · stock central</small>':x.ventaAdminDelegada===true?'<br><small class="muted">Registrada por administrador · a cargo del vendedor · stock central</small>':''}</td><td>${money(x.total)}</td><td>${esc(detalleFormaCobro(x))}${creditoVencido(x)?'<br><strong class="danger">CARTERA VENCIDA</strong>':''}</td><td>${x.formaPago==='credito'?money(resumenAbonosVentaCredito(x).total):'—'}</td><td>${x.formaPago==='credito'?money(resumenAbonosVentaCredito(x).saldo):'—'}</td><td><div class="actions" style="flex-wrap:nowrap"><button class="btn btn-light" onclick="verDoc('ventas','${x.id}')" title="Ver" aria-label="Ver">👁️</button><button class="btn btn-light" onclick="imprimirVenta('${x.id}')" title="Imprimir" aria-label="Imprimir">🖨️</button><button class="btn btn-primary" onclick="editarVenta('${x.id}')" ${esDevuelta(x.id)?'disabled title="Venta devuelta"':'title="Editar"'} aria-label="Editar">✏️</button>${x.formaPago==='credito'&&saldoCredito(x)>0&&!esDevuelta(x.id)?`<button class="btn btn-success" onclick="abrirAbonoCredito('${x.id}')">Abonar</button>`:''}<button class="btn btn-danger" onclick="solicitarEliminacionVenta('${x.id}')" title="Eliminar" aria-label="Eliminar">🗑️</button></div></td></tr>`).join('')||`<tr><td colspan="10" class="empty">Sin ventas</td></tr>`
+ tbVentas.innerHTML=arr.slice().reverse().map(x=>`<tr><td>${x.fecha}</td><td>${esc(x.numero)}</td><td>${esc(x.tercero)}</td><td>${esc(rutaVentaAnalisis(x)||'Sin ruta asignada')}</td><td>${esc(x.usuarioVenta||'No registrado')}${x.ventaAdminAtribuida===true?'<br><small class="muted">Registrada por administrador tras cierre · cobro a cargo del vendedor · stock central</small>':x.ventaAdminDelegada===true?'<br><small class="muted">Registrada por administrador · a cargo del vendedor · stock central</small>':''}</td><td>${money(x.total)}</td><td>${esDevuelta(x.id)?'<strong class="danger">ANULADA / DEVUELTA</strong><br>':''}${esc(detalleFormaCobro(x))}${creditoVencido(x)?'<br><strong class="danger">CARTERA VENCIDA</strong>':''}</td><td>${x.formaPago==='credito'?money(resumenAbonosVentaCredito(x).total):'—'}</td><td>${x.formaPago==='credito'?money(resumenAbonosVentaCredito(x).saldo):'—'}</td><td><div class="actions" style="flex-wrap:nowrap"><button class="btn btn-light" onclick="verDoc('ventas','${x.id}')" title="Ver" aria-label="Ver">👁️</button><button class="btn btn-light" onclick="imprimirVenta('${x.id}')" title="Imprimir" aria-label="Imprimir">🖨️</button><button class="btn btn-primary" onclick="editarVenta('${x.id}')" ${esDevuelta(x.id)?'disabled title="Venta anulada o devuelta"':'title="Editar"'} aria-label="Editar">✏️</button>${x.formaPago==='credito'&&saldoCredito(x)>0&&!esDevuelta(x.id)?`<button class="btn btn-success" onclick="abrirAbonoCredito('${x.id}')">Abonar</button>`:''}<button class="btn btn-danger" onclick="solicitarEliminacionVenta('${x.id}')" ${esDevuelta(x.id)?'disabled title="Ya anulada / devuelta"':'title="Anular"'} aria-label="Anular">🗑️</button></div></td></tr>`).join('')||`<tr><td colspan="10" class="empty">Sin ventas</td></tr>`
 }
 // Eliminación de una venta desde el historial con nueva validación de la clave del administrador principal.
 function solicitarEliminacionVenta(id){
- if(db.ventas.some(v=>v.id===id&&v.etapaFirebase==='etapa5'))return alert('Operación pendiente de centralización: las ventas confirmadas en Firestore no se pueden modificar, borrar ni abonar localmente. Se habilitará con su correspondiente transacción en la próxima etapa.');
+ if(db.ventas.some(v=>v.id===id&&v.etapaFirebase==='etapa5'))return window.gmcAbrirAnulacionVentaAdmin?.(id);
  if(!adminAutenticado||document.body.classList.contains('sesion-bloqueada'))return abrirAccesoAdmin('historialVentas');
  const venta=db.ventas.find(x=>x.id===id);
  if(!venta)return alert('Venta no encontrada');
@@ -2908,7 +2915,7 @@ function solicitarEliminacionVenta(id){
  document.getElementById('claveEliminarVenta').focus();
 }
 async function confirmarEliminacionVenta(id){
- if(db.ventas.some(v=>v.id===id&&v.etapaFirebase==='etapa5'))return alert('Operación pendiente de centralización: las ventas confirmadas en Firestore no se pueden modificar, borrar ni abonar localmente. Se habilitará con su correspondiente transacción en la próxima etapa.');
+ if(db.ventas.some(v=>v.id===id&&v.etapaFirebase==='etapa5'))return window.gmcConfirmarAnulacionVentaAdmin?.(id);
  if(!adminAutenticado||document.body.classList.contains('sesion-bloqueada'))return;
  const clave=document.getElementById('claveEliminarVenta')?.value||'';
  if(!clave)return alert('Ingrese la contraseña del administrador principal.');
@@ -2961,7 +2968,7 @@ function imprimirVenta(id){
 }
 let ventaEdicionLineas=[];
 function editarVenta(id){
- if(db.ventas.some(v=>v.id===id&&v.etapaFirebase==='etapa5'))return alert('Operación pendiente de centralización: las ventas confirmadas en Firestore no se pueden modificar, borrar ni abonar localmente. Se habilitará con su correspondiente transacción en la próxima etapa.');
+ if(db.ventas.some(v=>v.id===id&&v.etapaFirebase==='etapa5')&&!window.gmcCorregirVentaAdmin) return alert('La corrección administrativa no está cargada. No se modificó la factura.');
  if(!adminAutenticado)return abrirAccesoAdmin('historialVentas');
  const v=db.ventas.find(x=>x.id===id);if(!v)return alert('Venta no encontrada');
  if(esDevuelta(id))return alert('No se puede editar una venta devuelta, porque ya se reintegró al inventario.');
@@ -2969,7 +2976,8 @@ function editarVenta(id){
  const clienteRegistrado=db.clientes.some(c=>c.id===v.terceroId);
  const clientes='<option value="">Consumidor final / personalizado</option>'+db.clientes.map(c=>`<option value="${esc(c.id)}" ${c.id===v.terceroId?'selected':''}>${esc(c.nombre)}</option>`).join('');
  const opciones='<option value="">Seleccionar producto...</option>'+db.productos.map(p=>`<option value="${esc(p.id)}">${esc(p.nombre)}</option>`).join('');
- openModal('Editar venta '+(v.numero||'S/N'),`<p class="note">Se corregirá la venta original y el inventario por diferencia de cantidades. No se genera otra venta.</p><div class="row"><div class="c3"><label>Fecha</label><input id="edvFecha" type="date" value="${esc(v.fecha)}"></div><div class="c3"><label>Documento</label><input id="edvNumero" value="${esc(v.numero||'')}"></div><div class="c6"><label>Seleccionar cliente</label><select id="edvCliente" onchange="const p=db.clientes.find(x=>x.id===this.value);edvNombre.value=p?.nombre||'Consumidor final'">${clientes}</select></div><div class="c6"><label>Nombre del cliente</label><input id="edvNombre" value="${esc(v.tercero||'Consumidor final')}"></div><div class="c6"><label>Comentario</label><input id="edvComentario" value="${esc(v.comentario||'')}"></div></div><h3 style="margin-top:18px">Productos de la venta</h3><div id="edvLineas"></div><div class="row" style="margin-top:14px"><div class="c6"><label>Añadir producto</label><select id="edvNuevoProducto" onchange="const p=db.productos.find(x=>x.id===this.value);edvNuevoPrecio.value=p?Number(p.precio||0):''">${opciones}</select></div><div class="c2"><label>Cantidad</label><input id="edvNuevaCantidad" type="number" min="1" step="1" inputmode="numeric" value="1" onkeydown="gmcBloquearDecimalCantidadVenta(event)" oninput="gmcValidarEntradaUnidadesVenta(this)"></div><div class="c2"><label>Precio</label><input id="edvNuevoPrecio" type="number" min="0" step="0.01"></div><div class="c2"><label>Descuento</label><input id="edvNuevoDesc" type="number" min="0" step="0.01" value="0"></div></div><button class="btn btn-light" style="margin-top:10px" onclick="agregarProductoEdicion()">+ Agregar producto</button><div class="actions" style="justify-content:flex-end;margin-top:16px"><button class="btn btn-light" onclick="cerrarModal()">Cancelar</button><button class="btn btn-success" onclick="guardarEdicionVenta('${esc(id)}')">Guardar cambios</button></div>`);
+ const central=v.etapaFirebase==='etapa5';
+ openModal('Editar venta '+(v.numero||'S/N'),`<p class="note">${central?'Corrección centralizada del administrador. Fecha y número se conservan. No se corrigen jornadas cerradas ni se modifican cobros ya confirmados.':'Se corregirá la venta original y el inventario por diferencia de cantidades. No se genera otra venta.'}</p><div class="row"><div class="c3"><label>Fecha</label><input id="edvFecha" type="date" value="${esc(v.fecha)}" ${central?'readonly':''}></div><div class="c3"><label>Documento</label><input id="edvNumero" value="${esc(v.numero||'')}" ${central?'readonly':''}></div><div class="c6"><label>Seleccionar cliente</label><select id="edvCliente" onchange="const p=db.clientes.find(x=>x.id===this.value);edvNombre.value=p?.nombre||'Consumidor final'">${clientes}</select></div><div class="c6"><label>Nombre del cliente</label><input id="edvNombre" value="${esc(v.tercero||'Consumidor final')}"></div><div class="c6"><label>Comentario</label><input id="edvComentario" value="${esc(v.comentario||'')}"></div></div><h3 style="margin-top:18px">Productos de la venta</h3><div id="edvLineas"></div><div class="row" style="margin-top:14px"><div class="c6"><label>Añadir producto</label><select id="edvNuevoProducto" onchange="const p=db.productos.find(x=>x.id===this.value);edvNuevoPrecio.value=p?Number(p.precio||0):''">${opciones}</select></div><div class="c2"><label>Cantidad</label><input id="edvNuevaCantidad" type="number" min="1" step="1" inputmode="numeric" value="1" onkeydown="gmcBloquearDecimalCantidadVenta(event)" oninput="gmcValidarEntradaUnidadesVenta(this)"></div><div class="c2"><label>Precio</label><input id="edvNuevoPrecio" type="number" min="0" step="0.01"></div><div class="c2"><label>Descuento</label><input id="edvNuevoDesc" type="number" min="0" step="0.01" value="0"></div></div><button class="btn btn-light" style="margin-top:10px" onclick="agregarProductoEdicion()">+ Agregar producto</button>${central?`<div class="row" style="margin-top:14px"><div class="c12"><label>Motivo obligatorio de la corrección</label><input id="gmcVtaMotivo" maxlength="250" placeholder="Explique la razón de corregir esta factura"></div><div class="c12"><label>Contraseña de Firebase del administrador</label><input id="gmcVtaClave" type="password" autocomplete="current-password"></div></div>`:''}<div class="actions" style="justify-content:flex-end;margin-top:16px"><button class="btn btn-light" onclick="cerrarModal()">Cancelar</button><button class="btn btn-success" onclick="guardarEdicionVenta('${esc(id)}')">Guardar cambios</button></div>`);
  if(!clienteRegistrado)document.getElementById('edvCliente').value='';
  renderLineasEdicion();
 }
@@ -3015,7 +3023,7 @@ function prepararCorreccionStockAsignado(v,nuevas){
  return {pool,asig,plan};
 }
 function guardarEdicionVenta(id){
- if(db.ventas.some(v=>v.id===id&&v.etapaFirebase==='etapa5'))return alert('Operación pendiente de centralización: las ventas confirmadas en Firestore no se pueden modificar, borrar ni abonar localmente. Se habilitará con su correspondiente transacción en la próxima etapa.');
+ if(db.ventas.some(v=>v.id===id&&v.etapaFirebase==='etapa5'))return window.gmcGuardarEdicionVentaAdmin?.(id);
  if(!adminAutenticado)return alert('Solo el administrador puede editar ventas');
  const v=db.ventas.find(x=>x.id===id);if(!v)return alert('Venta no encontrada');
  if(esDevuelta(id))return alert('No se puede modificar una venta devuelta');
@@ -3288,7 +3296,7 @@ function guardarDevolucion(){
  db.devoluciones.push({id:uid(),ventaId:v.id,fecha:today(),motivo:devMotivo.value,total:v.total});
  devolverStockDeVenta(v);save();cerrarModal()
 }
-function esDevuelta(id){return db.devoluciones.some(d=>d.ventaId===id)}
+function esDevuelta(id){return db.devoluciones.some(d=>d.ventaId===id)||db.ventas.some(v=>v.id===id&&(v.estado==='anulada'||v.anulada===true))}
 function actualizarPanelAnalisis(){
   const desde=document.getElementById('dashDesde').value, hasta=document.getElementById('dashHasta').value;
   if(desde&&hasta&&desde>hasta)return alert('La fecha inicial no puede ser posterior a la fecha final');
@@ -3685,7 +3693,7 @@ function resumenAbonosVentaCredito(v){
  const acumulado=centavos(v.abono);
  const sinDetalle=Math.max(0,acumulado-inicial-totalPosteriores);
  const total=Math.max(acumulado,inicial+totalPosteriores);
- return {inicial:inicial/100,posteriores,sinDetalle:sinDetalle/100,total:total/100,saldo:Math.max(0,centavos(v.total)-total)/100};
+ return {inicial:inicial/100,posteriores,sinDetalle:sinDetalle/100,total:total/100,saldo:(v.estado==='anulada'||v.anulada===true)?0:Math.max(0,centavos(v.total)-total)/100};
 }
 function historialAbonosCreditoHtml(v){
  if(v.formaPago!=='credito')return '';
@@ -5134,6 +5142,7 @@ openModal('Preparando acceso Firebase','<p class="note">Conectando Firebase Auth
 import {initializeApp, getApps, getApp} from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-app.js';
 import {getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, EmailAuthProvider, reauthenticateWithCredential, updatePassword, sendPasswordResetEmail} from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-auth.js';
 import {getFirestore, doc, getDoc, getDocFromServer, getDocsFromServer, collection, query, where, orderBy, documentId, limit, startAfter, onSnapshot, setDoc, updateDoc, deleteDoc, runTransaction, serverTimestamp, writeBatch} from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-firestore.js';
+import {getFunctions,httpsCallable} from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-functions.js';
 const configFirebaseGMC = {
   apiKey:'AIzaSyBtj-y2p3qAYWknIX6J5aK6DAzkD9bOc1s',
   authDomain:'gmcdistribucionesdb.firebaseapp.com',
@@ -5146,6 +5155,7 @@ const configFirebaseGMC = {
 const appGMC=getApps().find(a=>a.name==='[DEFAULT]')||initializeApp(configFirebaseGMC);
 const firebaseAuthGMC=getAuth(appGMC);
 const firestoreGMC=getFirestore(appGMC);
+const gmcFuncionesVentasAdmin=getFunctions(appGMC,'us-central1');
 window.gmcFirebase={app:appGMC,auth:firebaseAuthGMC,firestore:firestoreGMC};
 let firebaseRolGMC=null;
 let stopPerfilesGMC=null;
@@ -6103,10 +6113,10 @@ function gmcSuscribirVentasFirebase(uidSesion){
   gmcVentasListas=!snap.metadata.fromCache&&!snap.metadata.hasPendingWrites;
   gmcEstadoVentas(snap.metadata.fromCache?'Ventas en caché; esperando confirmación del servidor.':snap.metadata.hasPendingWrites?'Hay escrituras de ventas pendientes de confirmar en Firestore.':'Ventas, abonos y cartera conectados a Firestore · '+db.ventas.length+' registro(s). Cierres: Etapa 7; Caja Bancos aún local.');
   try{localStorage.setItem(KEY,JSON.stringify(db));}catch(e){console.warn('Respaldo de prueba',e);}
-  gmcMostrarVentaPendiente();gmcMostrarAbonoPendiente();renderAll();
+  gmcMostrarVentaPendiente();gmcMostrarAbonoPendiente();gmcPintarCorreccionPendiente();renderAll();
   gmcRenderVentaPostCierre(); // GMC_IMPL_CONTROLADA_SELECTOR_V1_VENTAS
  },err=>{if(gmcMasterSesion!==uidSesion)return;db.ventas=[];gmcVentasListas=false;gmcEstadoVentas('Error al consultar ventas: '+mensajeFirebaseGMC(err));console.warn('Ventas Firestore',err);renderAll();});
- gmcMostrarVentaPendiente();gmcMostrarAbonoPendiente();
+ gmcMostrarVentaPendiente();gmcMostrarAbonoPendiente();gmcPintarCorreccionPendiente();
 }
 function gmcExigirVentaCentral(){
  if(!firebaseAuthGMC.currentUser||document.body.classList.contains('sesion-bloqueada'))throw Error('Primero inicie sesión con Firebase.');
@@ -6296,6 +6306,91 @@ window.gmcGuardarDocumentoVentaFirebase=async()=>{
   await gmcCrearVentaPendiente(d,'documento');
  }catch(err){alert(err.message||mensajeFirebaseGMC(err));}
 };
+// Corrección administrativa de ventas ya registradas (Cloud Function autenticada).
+// Solo la función del servidor cambia ventas, asignaciones, productos y auditoría.
+const gmcEditarVentaCallable=httpsCallable(gmcFuncionesVentasAdmin,'gmcCorregirVentaAdmin',{timeout:100000});
+const gmcCorrecClave=()=> 'gmc_correccion_venta_admin_'+(firebaseAuthGMC.currentUser?.uid||'sin_sesion');
+let gmcCorreccionVentaEnCurso=false;
+function gmcCorreccionPendiente(){try{return JSON.parse(localStorage.getItem(gmcCorrecClave())||'null');}catch{return null;}}
+function gmcPintarCorreccionPendiente(){
+ const e=document.getElementById('gmcVentaCorreccionPendiente');if(!e)return;
+ const p=gmcCorreccionPendiente();e.style.display=p?'':'none';
+ e.innerHTML=p?`<strong>⚠️ Corrección pendiente de comprobación · factura ${esc(p.numero||p.ventaId)}.</strong> No cree otra corrección.<div class="actions" style="margin-top:8px"><button type="button" class="btn btn-warning" onclick="gmcReintentarCorreccionVentaAdmin()">Comprobar y reintentar la misma operación</button></div>`:'';
+}
+function gmcCorreccionExigir(){
+ if(!adminAutenticado||firebaseRolGMC!=='admin'||!firebaseAuthGMC.currentUser||document.body.classList.contains('sesion-bloqueada'))throw Error('Acceso exclusivo del administrador autenticado en Firebase.');
+ if(!navigator.onLine||!gmcVentasListas||!gmcAsignacionesListas||!gmcMasterListos.productos||!gmcCierresListos)throw Error('Se requiere conexión confirmada con ventas, cierres, productos y asignaciones en Firestore.');
+ if(gmcCorreccionVentaEnCurso)throw Error('La corrección anterior todavía se está comprobando.');
+ if(gmcCorreccionPendiente())throw Error('Hay una operación pendiente. Pulse «Comprobar y reintentar la misma operación».');
+}
+async function gmcCorrecReautenticar(clave){
+ if(!clave)throw Error('Ingrese la contraseña actual del administrador Firebase.');
+ const auth=firebaseAuthGMC.currentUser;
+ await reauthenticateWithCredential(auth,EmailAuthProvider.credential(auth.email,clave));
+}
+async function gmcCorrecEjecutarPendiente(p){
+ if(!p||p.adminUid!==firebaseAuthGMC.currentUser?.uid)throw Error('La operación pendiente no pertenece a esta sesión.');
+ if(gmcCorreccionVentaEnCurso)return;
+ gmcCorreccionVentaEnCurso=true;
+ try{
+  const r=await gmcEditarVentaCallable(p.datos);
+  if(r.data?.confirmada!==true)throw Error('La función no confirmó la operación.');
+  localStorage.removeItem(gmcCorrecClave());gmcPintarCorreccionPendiente();cerrarModal();
+  alert(r.data.repetida?'Operación anterior confirmada sin repetir movimientos.':'Corrección de la factura '+(r.data.numero||p.numero)+' confirmada en Firestore. Inventario y evidencia actualizados de forma atómica.');
+ }catch(e){
+  const rechazoSeguro=['functions/failed-precondition','functions/invalid-argument','functions/permission-denied','functions/unauthenticated','functions/not-found'].includes(e?.code);
+  if(rechazoSeguro)localStorage.removeItem(gmcCorrecClave());
+  gmcPintarCorreccionPendiente();
+  alert(rechazoSeguro?'Corrección rechazada por el servidor sin modificar la venta: '+(e.message||mensajeFirebaseGMC(e)):'Corrección sin confirmación definitiva: '+(e.message||mensajeFirebaseGMC(e))+'. No repita con otro identificador. Utilice «Comprobar y reintentar la misma operación».');
+ }finally{gmcCorreccionVentaEnCurso=false;}
+}
+window.gmcReintentarCorreccionVentaAdmin=async()=>{
+ try{if(!adminAutenticado||firebaseRolGMC!=='admin'||!navigator.onLine)throw Error('Inicie como administrador con conexión.');const p=gmcCorreccionPendiente();if(!p)throw Error('No hay operación pendiente.');await gmcCorrecEjecutarPendiente(p);}catch(e){alert(e.message||mensajeFirebaseGMC(e));}
+};
+window.gmcGuardarEdicionVentaAdmin=async id=>{
+ try{
+  gmcCorreccionExigir();
+  const v=db.ventas.find(x=>x.id===id);if(!v||v.etapaFirebase!=='etapa5'||esDevuelta(id))throw Error('Factura no disponible para corrección.');
+  leerLineasEdicion();
+  const motivo=String(document.getElementById('gmcVtaMotivo')?.value||'').trim();
+  const clave=document.getElementById('gmcVtaClave')?.value||'';
+  if(!motivo||motivo.length>250)throw Error('Ingrese un motivo de hasta 250 caracteres.');
+  const lineas=ventaEdicionLineas.map(l=>({productoId:String(l.productoId),cantidad:Number(l.cantidad),precio:Number(l.precio),descuento:Number(l.descuento||0)}));
+  if(!gmcValidarTodasUnidadesVenta(lineas))throw Error('Cantidades de venta inválidas.');
+  if(!lineas.length)throw Error('La venta debe contener al menos un producto.');
+  const tercero=String(document.getElementById('edvNombre')?.value||'').trim();
+  if(!tercero)throw Error('Ingrese el nombre del cliente.');
+  if(!confirm('¿Corregir la factura '+v.numero+'? Se modificará el stock de origen mediante una sola transacción, si la caja está abierta.'))return;
+  await gmcCorrecReautenticar(clave);
+  const datos={operacionId:gmcIdVentaSeguro(),ventaId:id,tipo:'editar',revision:Number(v.revision||0),motivo,fecha:String(document.getElementById('edvFecha')?.value||''),numero:String(document.getElementById('edvNumero')?.value||''),terceroId:String(document.getElementById('edvCliente')?.value||''),tercero,comentario:String(document.getElementById('edvComentario')?.value||''),lineas};
+  const p={adminUid:firebaseAuthGMC.currentUser.uid,ventaId:id,numero:v.numero,datos};
+  localStorage.setItem(gmcCorrecClave(),JSON.stringify(p));gmcPintarCorreccionPendiente();
+  await gmcCorrecEjecutarPendiente(p);
+ }catch(e){alert(e.message||mensajeFirebaseGMC(e));}
+};
+window.gmcAbrirAnulacionVentaAdmin=id=>{
+ try{
+  gmcCorreccionExigir();
+  const v=db.ventas.find(x=>x.id===id);if(!v||v.etapaFirebase!=='etapa5'||esDevuelta(id))throw Error('Factura no disponible para anulación.');
+  const efectivo=v.formaPago==='efectivo';
+  openModal('Anular venta '+(v.numero||'S/N'),`<p><strong>Factura:</strong> ${esc(v.numero)} · <strong>Fecha:</strong> ${esc(v.fecha)}<br><strong>Vendedor:</strong> ${esc(v.usuarioVenta)}<br><strong>Cliente:</strong> ${esc(v.tercero)}<br><strong>Importe:</strong> ${money(v.total)}</p><p class="note">La factura conservará su número y quedará ANULADA, con auditoría. Solo se revierte stock a su origen exacto y se excluyen sus importes de los reportes vigentes. No se modifican cierres confirmados ni se realizan devoluciones bancarias automáticas.</p><label>Motivo obligatorio de anulación</label><input id="gmcVtaMotivoBaja" maxlength="250" placeholder="Indique la razón"><label style="margin-top:12px">Contraseña Firebase del administrador</label><input type="password" id="gmcVtaClaveBaja" autocomplete="current-password">${efectivo?'<label style="margin-top:12px"><input type="checkbox" id="gmcVtaEfectivoDevuelto" style="width:auto"> Confirmo que ya devolví al cliente el efectivo recibido; el aplicativo no realiza pagos físicos.</label>':''}<div class="actions" style="justify-content:flex-end;margin-top:16px"><button type="button" class="btn btn-light" onclick="cerrarModal()">Cancelar</button><button type="button" class="btn btn-danger" onclick="gmcConfirmarAnulacionVentaAdmin('${esc(id)}')">Confirmar anulación</button></div>`);
+ }catch(e){alert(e.message||mensajeFirebaseGMC(e));}
+};
+window.gmcConfirmarAnulacionVentaAdmin=async id=>{
+ try{
+  gmcCorreccionExigir();const v=db.ventas.find(x=>x.id===id);if(!v||esDevuelta(id))throw Error('La factura ya no está vigente.');
+  const motivo=String(document.getElementById('gmcVtaMotivoBaja')?.value||'').trim(),clave=document.getElementById('gmcVtaClaveBaja')?.value||'';
+  if(!motivo||motivo.length>250)throw Error('Ingrese un motivo de hasta 250 caracteres.');
+  if(v.formaPago==='efectivo'&&!document.getElementById('gmcVtaEfectivoDevuelto')?.checked)throw Error('Confirme expresamente la devolución del efectivo al cliente.');
+  if(!confirm('¿ANULAR la factura '+v.numero+'? Se excluirá de importes y se repondrán las unidades originales; la factura seguirá registrada como ANULADA.'))return;
+  await gmcCorrecReautenticar(clave);
+  const datos={operacionId:gmcIdVentaSeguro(),ventaId:id,tipo:'eliminar',revision:Number(v.revision||0),motivo,devolucionEfectivoConfirmada:v.formaPago==='efectivo'};
+  const p={adminUid:firebaseAuthGMC.currentUser.uid,ventaId:id,numero:v.numero,datos};
+  localStorage.setItem(gmcCorrecClave(),JSON.stringify(p));gmcPintarCorreccionPendiente();await gmcCorrecEjecutarPendiente(p);
+ }catch(e){alert(e.message||mensajeFirebaseGMC(e));}
+};
+window.gmcCorregirVentaAdmin=true;
+
 // ETAPA 6: abonos posteriores a crédito y cartera centralizados en el documento
 // de la venta; nunca se reescribe el historial ni se altera el inventario.
 let gmcAbonoEnCurso=false;
