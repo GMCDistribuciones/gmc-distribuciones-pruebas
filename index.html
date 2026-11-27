@@ -2552,6 +2552,7 @@ function renderRutas(modo='diario'){
       if(centavos>0)saldoAnteriorRutas.set(clienteId,(saldoAnteriorRutas.get(clienteId)||0)+centavos);
     };
     for(const v of (db.ventas||[])){
+      if(!esHistorico&&(v.estado==='anulada'||v.anulada===true))continue; // Factura anulada: no sumar cobros en Rutas.
       if(esHistorico&&!creditoPerteneceUsuario(v))continue;
       const dev=(db.devoluciones||[]).find(d=>String(d.ventaId)===String(v.id));
       if(dev&&(!esHistorico||!dev.fecha||String(dev.fecha)<=fechaConsulta))continue;
@@ -2608,6 +2609,7 @@ function renderRutas(modo='diario'){
     const fechaProductos=fechaConsulta;
     const idsRutaVisible=new Set(clientes.filter(c=>gmcCoincideCliente25(c,busquedaRutas)).map(c=>String(c.id)));
     for(const v of (db.ventas||[])){
+      if(!esHistorico&&(v.estado==='anulada'||v.anulada===true))continue; // Factura anulada: no sumar productos en Rutas.
       if(String(v.fecha||'')!==fechaProductos||!creditoPerteneceUsuario(v))continue;
       const dev=(db.devoluciones||[]).find(d=>String(d.ventaId)===String(v.id));
       if(dev&&(!esHistorico||!dev.fecha||String(dev.fecha)<=fechaConsulta))continue;
