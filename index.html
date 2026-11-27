@@ -760,8 +760,6 @@
         <p id="rutasResumen" class="muted" style="font-size:12px" aria-live="polite"></p>
         <div class="note" id="gmcAperturaPendienteRutas" style="display:none;margin:10px 0" aria-live="polite"></div>
         <div class="note" id="gmcAbonoPendienteRutas" style="display:none;margin:10px 0" aria-live="polite"></div>
-        <!-- Facturas que el administrador puso a cargo de este vendedor, incluso si el cliente pertenece a otra ruta. -->
-        <div id="gmcCobrosDelegadosRutas" class="card" style="display:none;margin:12px 0;background:#f8fbff" aria-live="polite"></div>
         <div class="table-wrap">
           <table>
             <thead><tr><th>Visitado</th><th>Ruta</th><th>Visita</th><th>Nombre</th><th>Razón social</th><th>Identificación</th><th>Día</th><th>Vendedor</th><th>Teléfono</th><th>Dirección</th><th>Cuentas<br>pendientes</th><th>Saldo por cobrar</th><th>Detalle de facturas</th></tr></thead>
@@ -769,6 +767,8 @@
           </table>
         </div>
         <div id="gmcPagRutas25" aria-live="polite"></div>
+        <!-- Facturas asignadas por administración: después del plan de visitas; sin modificar rutas ni visitas. -->
+        <div id="gmcCobrosDelegadosRutas" class="card" style="display:none;margin:12px 0;background:#f8fbff" aria-live="polite"></div>
       </div>
     </section>
 
@@ -2234,7 +2234,7 @@ function gmcImprimirPlanRutasFiltrado(){
  if(document.body.classList.contains('sesion-bloqueada')||!document.getElementById('rutas')?.classList.contains('active')||
     (!adminAutenticado&&(!usuarioActual||!(usuarioActual.modulos||[]).some(p=>p==='ventas'||p==='clientes'))))return alert('Abra Rutas con una sesión autorizada.');
  const plan=gmcPlanRutasParaImprimir;
- if(!plan?.filas.length)return alert('No hay clientes para los filtros y la búsqueda seleccionados.');
+ if(!plan||(plan.filas.length===0&&!(plan.ventasAdminAsignadas||[]).length))return alert('No hay clientes ni facturas asignadas para los filtros seleccionados.');
  const td=valor=>`<td>${esc(valor??'')}</td>`;
  const vistaVendedor=!!usuarioActual&&!adminAutenticado;
  const filas=plan.filas.map(f=>vistaVendedor
@@ -2247,9 +2247,11 @@ function gmcImprimirPlanRutasFiltrado(){
  const rutaCabecera=plan.ruta&&plan.ruta!=='__sin_ruta__'?plan.ruta:(plan.ruta==='__sin_ruta__'?'Sin ruta':(rutasDelPlan.length?rutasDelPlan.join(', '):'Sin ruta'));
  const subtitulo=`Día: ${plan.dia||'Todos'} · Vendedor: ${plan.vendedor||'Todos'} · Ruta: ${rutaCabecera} · Clientes: ${plan.filas.length}`;
  const busqueda=plan.busqueda?`<p><b>Búsqueda:</b> ${esc(plan.busqueda)}</p>`:'';
+ const ventasAdminAsignadas=plan.ventasAdminAsignadas||[];
+ const bloqueAdmin=ventasAdminAsignadas.length?`<section class="delegadas"><h2>Ventas asignadas por administración · Al final de la ruta</h2><p>Facturas del vendedor indicado. Información complementaria: no incrementa los clientes ni los totales del plan de visitas.</p><table><thead><tr>${vistaVendedor?'':'<th>Vendedor</th>'}<th>Factura</th><th>Cliente</th><th>Fecha</th><th>Forma</th><th>Total</th><th>Saldo</th></tr></thead><tbody>${ventasAdminAsignadas.map(v=>`<tr>${vistaVendedor?'':td(v.vendedor)}${td(v.numero)}${td(v.cliente)}${td(v.fecha)}${td(v.forma)}<td class="dinero">${money(v.total)}</td><td class="dinero">${v.saldo===null?'—':money(v.saldo)}</td></tr>`).join('')}</tbody></table></section>`:'';
  const html=`<!doctype html><html lang="es"><head><meta charset="utf-8"><title>GMC - Plan de visitas filtrado</title><style>
- @page{size:A4 portrait;margin:9mm}*{box-sizing:border-box}body{font:8pt Arial,sans-serif;color:#172033;margin:0}h1{font-size:15pt;color:#0b3d73;margin:0 0 3mm}p{margin:0 0 2.5mm}.resumen{margin:3mm 0 4mm;font-weight:bold}table{width:100%;border-collapse:collapse;table-layout:fixed}thead{display:table-header-group}tr{break-inside:avoid;page-break-inside:avoid}th,td{border:1px solid #c4ceda;padding:0.45mm 0.8mm;line-height:1.08;font-size:7pt;vertical-align:middle;overflow-wrap:anywhere;word-break:break-word}th{background:#eaf3ff}th:nth-child(1){width:8%;white-space:nowrap;word-break:normal;overflow-wrap:normal}th:nth-child(2){width:17%}th:nth-child(3){width:17%}th:nth-child(4){width:15%}th:nth-child(5){width:10%;text-align:center;word-break:normal;overflow-wrap:normal}th:nth-child(6){width:13%}th:nth-child(7){width:20%}.observacion{height:auto}.num,.check{text-align:center}.check{font-size:9pt}.dinero{text-align:right;white-space:nowrap}footer{font-size:7pt;margin-top:4mm}${vistaVendedor?'th:nth-child(2){width:33%}th:nth-child(3){width:19%}th:nth-child(4){width:15%;text-align:center}th:nth-child(5){width:25%}':''}
- </style></head><body><h1>GMC DISTRIBUCIONES — Rutas · Plan de visitas</h1><p>${esc(subtitulo)}</p>${busqueda}<p class="resumen">Cuentas por cobrar: ${money(total)} · Cartera vencida: ${money(vencido)}</p><table><thead>${vistaVendedor?'<tr><th>Visitado</th><th>Nombre</th><th>Saldo por cobrar</th><th>Cuentas<br>pendientes</th><th>Observaciones</th></tr>':'<tr><th>Visitado</th><th>Nombre</th><th>Razón social</th><th>Identificación</th><th>Cuentas<br>pendientes</th><th>Saldo por cobrar</th><th>Observaciones</th></tr>'}</thead><tbody>${filas}</tbody></table><footer>Plan de visitas según los filtros mostrados en Rutas. Impresión de consulta: no registra visitas ni modifica datos.</footer></body></html>`;
+ @page{size:A4 portrait;margin:9mm}*{box-sizing:border-box}body{font:8pt Arial,sans-serif;color:#172033;margin:0}h1{font-size:15pt;color:#0b3d73;margin:0 0 3mm}p{margin:0 0 2.5mm}.resumen{margin:3mm 0 4mm;font-weight:bold}table{width:100%;border-collapse:collapse;table-layout:fixed}thead{display:table-header-group}tr{break-inside:avoid;page-break-inside:avoid}th,td{border:1px solid #c4ceda;padding:0.45mm 0.8mm;line-height:1.08;font-size:7pt;vertical-align:middle;overflow-wrap:anywhere;word-break:break-word}th{background:#eaf3ff}th:nth-child(1){width:8%;white-space:nowrap;word-break:normal;overflow-wrap:normal}th:nth-child(2){width:17%}th:nth-child(3){width:17%}th:nth-child(4){width:15%}th:nth-child(5){width:10%;text-align:center;word-break:normal;overflow-wrap:normal}th:nth-child(6){width:13%}th:nth-child(7){width:20%}.observacion{height:auto}.num,.check{text-align:center}.check{font-size:9pt}.dinero{text-align:right;white-space:nowrap}footer{font-size:7pt;margin-top:4mm}${vistaVendedor?'th:nth-child(2){width:33%}th:nth-child(3){width:19%}th:nth-child(4){width:15%;text-align:center}th:nth-child(5){width:25%}':''}.delegadas{margin-top:4mm;break-before:auto}.delegadas h2{font-size:10pt;margin:0 0 1.5mm}.delegadas p{font-size:7pt;margin:0 0 1.5mm}.delegadas th,.delegadas td{width:auto!important;padding:0.45mm 0.8mm;white-space:normal;word-break:break-word}
+ </style></head><body><h1>GMC DISTRIBUCIONES — Rutas · Plan de visitas</h1><p>${esc(subtitulo)}</p>${busqueda}<p class="resumen">Cuentas por cobrar: ${money(total)} · Cartera vencida: ${money(vencido)}</p><table><thead>${vistaVendedor?'<tr><th>Visitado</th><th>Nombre</th><th>Saldo por cobrar</th><th>Cuentas<br>pendientes</th><th>Observaciones</th></tr>':'<tr><th>Visitado</th><th>Nombre</th><th>Razón social</th><th>Identificación</th><th>Cuentas<br>pendientes</th><th>Saldo por cobrar</th><th>Observaciones</th></tr>'}</thead><tbody>${filas}</tbody></table>${bloqueAdmin}<footer>Plan de visitas según los filtros mostrados en Rutas. Impresión de consulta: no registra visitas ni modifica datos.</footer></body></html>`;
  imprimirDocumentoNativo(html);
 }
 // Imprime la consulta de Rutas de la fecha indicada: visitas confirmadas, cobros, saldos y productos.
@@ -2414,6 +2416,18 @@ function gmcRutasDeudasAnterioresCompletas(){
    total:Number(d.importe),saldo:Number(d.saldo),abonoInicial:0,
    abonosPosteriores:Array.isArray(d.abonos)?d.abonos:[]};
  });
+}
+// Facturas del administrador confiadas al vendedor: consulta sin escrituras.
+// Las pendientes permanecen visibles; las ya pagadas figuran solo el día de emisión.
+function gmcRutasVentasAdminAsignadas(idVendedor='',fecha=today()){
+ return (db.ventas||[]).filter(v=>
+  (v.ventaAdminAtribuida===true||v.ventaAdminDelegada===true)
+  &&!!v.usuarioVentaId
+  &&(!idVendedor||String(v.usuarioVentaId)===String(idVendedor))
+  &&!esDevuelta(v.id)
+  &&(String(v.fecha||'')===fecha||(v.formaPago==='credito'&&saldoCredito(v)>0))
+ ).sort((a,b)=>String(a.usuarioVenta||'').localeCompare(String(b.usuarioVenta||''),'es')||
+  String(a.numero||'').localeCompare(String(b.numero||''),'es',{numeric:true}));
 }
 // Rutas: consulta sin escrituras contables. Los vendedores ven solo sus clientes asignados.
 function renderRutas(modo='diario'){
@@ -2662,23 +2676,19 @@ function renderRutas(modo='diario'){
     const impresion={clienteId:String(c.id),ruta:c.ruta||'—',visita:numeroVisita,nombre:nombreVisibleRuta,razon:c.razonSocial||'',identificacion:c.identificacion||'',dia:c.diaVisita||'—',vendedor,telefono:c.telefono||'',direccion:c.direccion||'',cuentas:creditos.length,saldo,vencido,saldoAnterior,cobradoHoy,productos:columnasProductosHoyRutas.map(([clave])=>productosClienteHoy?.get(clave)||0),visitado:visitasConfirmadas&&yaVisitado,facturas:creditos.map(v=>String(v.numero||'S/N')+' ('+money(esHistorico?gmcRutasSaldoAlCorte(v,fechaConsulta):saldoCredito(v))+')').join('; ')||'—'};
     return {cliente:c,impresion,html:`<tr><td style="text-align:center">${casilla}</td><td>${esc(c.ruta||'—')}</td><td><strong>${numeroVisita}</strong></td><td>${esc(nombreVisibleRuta)}${venderDesdeRuta}</td>${esUsuarioRuta?`<td><strong class="${saldoAnterior>0?'danger':''}">${money(saldoAnterior)}</strong></td><td><strong>${money(cobradoHoy)}</strong></td><td><strong class="${saldo>0?'danger':''}">${money(saldo)}</strong></td>${columnasCantidadesHoy}`:`<td>${esc(c.razonSocial||'')}</td><td>${esc(c.identificacion||'')}</td>`}<td class="gmc-rutas-auxiliar">${esc(c.diaVisita||'—')}</td><td class="gmc-rutas-auxiliar">${esc(vendedor)}</td><td class="gmc-rutas-auxiliar">${esc(c.telefono||'')}</td><td class="gmc-rutas-auxiliar">${esc(c.direccion||'')}</td><td>${creditos.length}</td>${esUsuarioRuta?'':`<td><strong class="${saldo>0?'danger':''}">${money(saldo)}</strong></td>`}<td>${detalle}</td></tr>`};
   });
-  // Cartera de ventas registradas por el administrador y asignadas expresamente a este vendedor.
-  // No transfiere fichas de clientes, rutas, inventario, ni marca visitas ficticias.
-  // Se muestra independientemente del día/ruta seleccionados para que una factura
-  // asignada a un cliente ajeno nunca quede inaccesible al vendedor responsable.
+  // Facturas expresamente asignadas por administración: al final de la ruta visible.
+  // No altera el vendedor de la ficha, las visitas, los saldos ni los cierres.
   const panelDelegados=(moduloHistorico?null:campo('gmcCobrosDelegadosRutas'));
+  const delegados=!esHistorico&&(esUsuarioRuta||esAdmin)
+    ?gmcRutasVentasAdminAsignadas(esUsuarioRuta?idUsuario:(vendedorElegido==='__sin_asignar__'?'__ninguno__':vendedorElegido),fechaConsulta)
+    :[];
   if(panelDelegados){
-    const delegados=esUsuarioRuta&&!esHistorico?(db.ventas||[]).filter(v=>
-      (v.ventaAdminAtribuida===true||v.ventaAdminDelegada===true)
-      &&String(v.usuarioVentaId||'')===idUsuario
-      &&v.formaPago==='credito'&&!esDevuelta(v.id)&&saldoCredito(v)>0
-    ):[];
     panelDelegados.style.display=delegados.length?'':'none';
-    panelDelegados.innerHTML=delegados.length?`<h3 style="margin:0 0 6px">💳 Facturas asignadas por administración para cobrar</h3><p class="muted" style="font-size:12px">Estas facturas están a cargo de su usuario aunque el cliente figure en otra ruta. Son independientes de los filtros de visita; no cambian los clientes ni las visitas programadas.</p><div class="table-wrap"><table><thead><tr><th>Factura</th><th>Cliente</th><th>Fecha</th><th>Saldo pendiente</th><th>Acción</th></tr></thead><tbody>${delegados.sort((a,b)=>String(a.numero||'').localeCompare(String(b.numero||''),'es',{numeric:true})).map(v=>`<tr><td>${esc(v.numero||'S/N')}</td><td>${esc(v.tercero||'')}</td><td>${esc(v.fecha||'')}</td><td><strong>${money(saldoCredito(v))}</strong></td><td><button type="button" class="btn btn-light" style="padding:7px 10px" data-venta-id="${esc(v.id)}" onclick="gmcVerFacturaCompletaDesdeRutas(this.dataset.ventaId)">👁 Ver factura</button> <button type="button" class="btn btn-success" style="padding:7px 10px" data-venta-id="${esc(v.id)}" onclick="gmcCobrarVentaDelegadaRutas(this.dataset.ventaId)">Abonar</button></td></tr>`).join('')}</tbody></table></div>`:'';
+    panelDelegados.innerHTML=delegados.length?`<h3 style="margin:0 0 6px">💳 Ventas asignadas por administración · Al final de la ruta</h3><p class="muted" style="font-size:12px">Facturas a cargo del vendedor indicado, aunque el cliente pertenezca a otra ruta. Los créditos pendientes permanecen visibles para cobrar; otras ventas se muestran el día en que fueron registradas. No se añaden clientes, visitas ni importes a los totales de la ruta.</p><div class="table-wrap"><table><thead><tr>${esAdmin?'<th>Vendedor</th>':''}<th>Factura</th><th>Cliente</th><th>Fecha</th><th>Forma de pago</th><th>Total</th><th>Saldo</th><th>Acciones</th></tr></thead><tbody>${delegados.map(v=>`<tr>${esAdmin?`<td>${esc(v.usuarioVenta||nombresUsuarios.get(String(v.usuarioVentaId))||'Vendedor asignado')}</td>`:''}<td>${esc(v.numero||'S/N')}</td><td>${esc(v.tercero||'')}</td><td>${esc(v.fecha||'')}</td><td>${esc(detalleFormaCobro(v))}</td><td>${money(v.total)}</td><td><strong>${v.formaPago==='credito'?money(saldoCredito(v)):'—'}</strong></td><td><button type="button" class="btn btn-light" style="padding:7px 10px" data-venta-id="${esc(v.id)}" onclick="gmcVerVentaAdminAsignadaEnRutas(this.dataset.ventaId)">👁 Ver factura</button> ${esUsuarioRuta&&v.formaPago==='credito'&&saldoCredito(v)>0?`<button type="button" class="btn btn-success" style="padding:7px 10px" data-venta-id="${esc(v.id)}" onclick="gmcCobrarVentaDelegadaRutas(this.dataset.ventaId)">Abonar</button>`:''}</td></tr>`).join('')}</tbody></table></div>`:'';
   }
   const filasFiltradas25=filasRutas25.filter(f=>gmcCoincideCliente25(f.cliente,busquedaRutas));
   // Guardar en memoria todas las filas que cumplen los filtros, no solo la página visible.
-  const nuevoPlanRutas={dia:diaElegido,vendedor:vendedorSel.selectedOptions?.[0]?.textContent||'',ruta:filtroRuta,busqueda:busquedaRutas,fechaConsulta,esHistorico,esUsuarioRuta,visitasConfirmadas,columnasProductos:columnasProductosHoyRutas.map(([,nombre])=>nombre),filas:filasFiltradas25.map(f=>f.impresion)};
+  const nuevoPlanRutas={dia:diaElegido,vendedor:vendedorSel.selectedOptions?.[0]?.textContent||'',ruta:filtroRuta,busqueda:busquedaRutas,fechaConsulta,esHistorico,esUsuarioRuta,visitasConfirmadas,columnasProductos:columnasProductosHoyRutas.map(([,nombre])=>nombre),filas:filasFiltradas25.map(f=>f.impresion),ventasAdminAsignadas:delegados.map(v=>({id:String(v.id),numero:v.numero||'S/N',cliente:v.tercero||'',vendedor:v.usuarioVenta||nombresUsuarios.get(String(v.usuarioVentaId))||'Vendedor asignado',fecha:v.fecha||'',forma:detalleFormaCobro(v),total:Number(v.total||0),saldo:v.formaPago==='credito'?saldoCredito(v):null}))};
   if(moduloHistorico)gmcPlanRutasHistoricasParaImprimir=nuevoPlanRutas;else gmcPlanRutasParaImprimir=nuevoPlanRutas;
   const paginaRutas25=gmcPagina25(filasFiltradas25,moduloHistorico?gmcPaginaRutasHistoricas25:gmcPaginaRutas25);
   if(moduloHistorico)gmcPaginaRutasHistoricas25=paginaRutas25.pagina;else gmcPaginaRutas25=paginaRutas25.pagina;
@@ -2833,6 +2843,14 @@ function gmcAbonarDesdeRutas(id,clienteId){
  abrirAbonoCredito(registro.venta.id);
 }
 
+// Consulta de una factura asignada por administración, sea a crédito o pagada.
+function gmcVerVentaAdminAsignadaEnRutas(id){
+ if(document.body.classList.contains('sesion-bloqueada')||!document.getElementById('rutas')?.classList.contains('active'))return;
+ const v=(db.ventas||[]).find(x=>String(x.id)===String(id));
+ if(!v||(v.ventaAdminAtribuida!==true&&v.ventaAdminDelegada!==true)||esDevuelta(v.id))return alert('Factura asignada no disponible.');
+ if(!adminAutenticado&&(!usuarioActual||String(v.usuarioVentaId||'')!==String(usuarioActual.id)))return alert('Esta factura no está asignada a su usuario.');
+ verDoc('ventas',v.id);
+}
 // Cobro del crédito transferido por el administrador. La factura, no la ficha
 // del cliente, determina la autorización de cobro. Reutiliza el abono atómico.
 function gmcCobrarVentaDelegadaRutas(id){
